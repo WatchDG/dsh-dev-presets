@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Architect">
+  <!-- Original artwork: a drafting compass over a blueprint grid. -->
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="#0B1220" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+  <g stroke="#1E3A5F" stroke-width="0.6" opacity="0.85">
+    <path d="M12 20H52M12 32H52M12 44H52M20 12V52M32 12V52M44 12V52"/>
+  </g>
+  <circle cx="32" cy="24" r="8" fill="none" stroke="#67E8F9" stroke-width="2"/>
+  <path d="M32 6V15M32 24L18 53M32 24L46 53" fill="none" stroke="#67E8F9" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="32" cy="24" r="1.6" fill="#FBBF24"/>
+  <path d="M23 49.5H19.5M45 49.5H41" stroke="#67E8F9" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+</svg>

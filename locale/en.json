@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Development Presets",
+    "description": "Development-role agent presets for DeepSeek Harness. The Architect preset investigates tasks and documents concepts and implementation plans; the Implementer preset executes an approved plan end to end, keeps a progress file under docs, and verifies the result against its acceptance criteria; the Reviewer preset checks the implementation against the plan and reports findings for another model to correct. An optional Host plugin sets a default model route per preset."
+  }
+}

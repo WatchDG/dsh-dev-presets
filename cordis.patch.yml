@@ -1,0 +1,21 @@
+# Development presets for DeepSeek Harness.
+#
+# One Host plugin row: optional default model routes per preset. The routes
+# themselves live in the profile patch layer, next to the deployment's model
+# catalog, and the shipped default is an empty map so the plugin is inert until
+# configured:
+#
+#   - id: dev-presets-model
+#     config:
+#       presets:
+#         architect:  { provider: opencode-live, model: deepseek-v4-pro }
+#         implementer: { provider: opencode-live, model: deepseek-v4.1-flash }
+#         reviewer:   { provider: opencode-live, model: deepseek-v4-pro }
+#
+# Preset declarations themselves are the other files listed in
+# `dsh.bundle.patch`.
+- insert:
+    - id: dev-presets-model
+      name: dsh-dev-presets
+      config:
+        presets: {}
