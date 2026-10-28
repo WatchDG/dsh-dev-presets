@@ -256,6 +256,7 @@ test('the architect persona prompt is the complete concept-and-plan contract', (
     'Implementation and review belong to other agents',
     'Do not perform their stages.',
     'Do not produce a step-by-step implementation plan or modify implementation code during this stage.',
+    'The plan is a static implementation contract, not an execution record.',
     'Store these ideas in potential_future_features at the repository root.',
     'Another model performs the implementation.',
     'Do not expand scope in the name of clean architecture or future extensibility.',
@@ -341,7 +342,7 @@ test('the implementer persona prompt is the complete execution contract', () => 
     '# 3. Scope Discipline',
     '# 4. Clean Implementation Without Legacy Compatibility',
     '# 5. Implementation Quality',
-    '# 6. Persistent Checklist and Execution State',
+    '# 6. Persistent Progress File and Execution State',
     '# 7. Testing and Verification',
     '# 8. Repository and Operational Safety',
     '# 9. Blockers and Plan Deviations',
@@ -360,9 +361,11 @@ test('the implementer persona prompt is the complete execution contract', () => 
     'Do not stop after analysis, a proposed approach, an initial scaffold, or partial implementation.',
     'If the plan file cannot be identified or accessed, request it rather than inventing an implementation contract.',
     'Backward compatibility is not required unless the approved plan explicitly requires it.',
-    'Before changing implementation code, create a persistent execution checklist derived from the entire approved plan.',
-    'IMPLEMENTED: code changes are present, but required verification is incomplete.',
-    'VERIFIED: the item meets its completion condition and has supporting verification evidence.',
+    'The plan is read-only for you: never edit it, annotate it, check off its steps, or record execution state in it.',
+    'Before changing implementation code, create the persistent progress file for the entire approved plan.',
+    'IMPLEMENTED: the required changes are present, but the entry\'s own verification is incomplete, not yet run, or not yet passing.',
+    'VERIFIED: the changes are present, the entry\'s verification procedure has been executed, and its completion criteria are met with recorded evidence.',
+    'When you pick up a step or substep for work, set it IN_PROGRESS in the progress file before making its implementation changes.',
     'Never report an unexecuted check as passed.',
     'Do not weaken assertions, disable checks, delete relevant tests, or change expected results merely to obtain a passing result.',
     'Report only what the implementation and executed checks support.',
@@ -373,7 +376,7 @@ test('the implementer persona prompt is the complete execution contract', () => 
   }
 })
 
-test('the reviewer preset composes the read-only review toolset', () => {
+test('the reviewer preset composes the review toolset with a writable review file', () => {
   const reviewer = declarations.find((declaration) => configOf(declaration).id === 'reviewer')
   assert.ok(reviewer, 'the reviewer preset exists')
 
@@ -394,8 +397,10 @@ test('the reviewer preset composes the read-only review toolset', () => {
     'tool-web',
   ])
 
+  // Writing is enabled solely for the `[plan name].review.md` deliverable;
+  // the persona contract forbids writing any other file.
   const files = pluginsOf(reviewer).find((plugin) => plugin.id === 'tool-fs')
-  assert.deepEqual(files.config, { read: true, readImage: true, write: false, edit: false })
+  assert.deepEqual(files.config, { read: true, readImage: true, write: true, edit: true })
 })
 
 test('the reviewer preset deliberately omits unrelated capabilities', () => {
@@ -411,7 +416,7 @@ test('the reviewer preset deliberately omits unrelated capabilities', () => {
   for (const omitted of ['tool-subagent', 'tool-subagent-fork', 'tool-subagent-control', 'tool-workflow', 'workflow-ptc']) {
     assert.ok(!ids.includes(omitted), `reviewer must not compose ${omitted}`)
   }
-  // The review report is chat output, not a deliverable file.
+  // The review file is written through tool-fs, not presented as a deliverable.
   assert.ok(!ids.includes('present'), 'reviewer must not compose present')
 })
 
@@ -447,9 +452,10 @@ test('the reviewer persona prompt is the complete review contract', () => {
     '# 2. Establish the Review Contract',
     '# 3. Verify the Implementation',
     '# 4. Checks and Evidence',
-    '# 5. Review Report',
-    '# 6. Proposed Corrections',
-    '# 7. Communication and Evidence',
+    '# 5. Review File, Statuses, and Findings',
+    '# 6. Review Report',
+    '# 7. Proposed Corrections',
+    '# 8. Communication and Evidence',
   ]
   let previous = -1
   for (const heading of stages) {
@@ -460,14 +466,16 @@ test('the reviewer persona prompt is the complete review contract', () => {
 
   const required = [
     'You are a code reviewer.',
-    'A request to review an implementation authorizes inspection and safe verification, not corrective changes.',
+    'A request to review an implementation authorizes inspection, safe verification, and creating or updating the review file (`[plan name].review.md`), not corrective changes.',
     'Do not change implementation code during review, even when a fix appears obvious.',
+    'The plan and the implementer\'s progress file are read-only for you: never edit them, annotate them, or record review state in them.',
+    'Treat the progress file as the implementer\'s claim, not as proof',
     'they are applied by the implementation agent, not by you.',
     'If the change boundaries cannot be determined reliably, request a baseline commit, commit range, or another precise reference.',
     'Potential future features are not review requirements. Their absence is not a defect.',
     'Distinguish confirmed defects from hypotheses and optional improvements.',
     'Never claim to have inspected files or executed checks that you have not actually inspected or executed.',
-    'Overall status: conforms, partially conforms, or does not conform to the plan.',
+    'Overall status: CONFORMS, PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE.',
     'If issues are found, propose a specific set of corrective changes and request approval. Do not apply corrections before approval.',
     'Do not expand scope in the name of clean architecture or future extensibility.',
   ]

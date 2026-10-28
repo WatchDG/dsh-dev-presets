@@ -22,8 +22,8 @@ The bundle ships three presets:
 Every preset prompt opens with one mandatory rule outside its role sections: the
 agent never creates, amends, or otherwise rewrites a git commit unless the user
 explicitly instructs it to commit. Finished work stays in the working tree until
-the user asks for the commit, and an approved plan or a completed checklist does
-not authorize committing on its own.
+the user asks for the commit, and an approved plan or a completed progress file
+does not authorize committing on its own.
 
 ## The Architect preset
 
@@ -33,12 +33,27 @@ never advance automatically:
 1. **Investigation and concept development** — inspect the repository, read its
    documentation, examine implementation and tests, and write a concept
    document under `docs`.
-2. **Implementation planning** — after the concept is approved, write a
-   self-contained plan that another model implements.
+2. **Implementation planning** — after the concept is approved and the user
+   explicitly requests the plan, write a self-contained plan that another model
+   implements. Approval of the concept is not a request for the plan.
 
 Review and execution are separate presets: the **Reviewer** checks an
 implementation against the approved plan and concept, and the **Implementer**
 executes the plan and applies approved corrections.
+
+The plan is a static handoff contract, not an execution record. It lives under
+`docs` with a fixed name, `YYYYMMDD-NN-slug.md`, and its steps form a directed
+acyclic graph: stable identifiers (`S1`, `S2`, ...), explicit `Depends on:`
+lines, and a summary of the parallel execution levels the implementer can use. A
+step may hold one nested level of substeps (`S3.1`, `S3.2`, ...) with their own
+sibling dependencies and local graph summary; substeps never nest further and
+never cross their parent step's boundary. Each step states an approximate
+`Estimated context:` (`S`, `M`, or `L`, optionally a token range) sized against a
+128k–256k window, and the plan favors genuine parallelism over a merely
+sequential list. The plan records no statuses, checkboxes, progress marks, or
+verification results: execution state belongs to the implementer's sibling
+`[plan name].progress.md`, and review state to the reviewer's sibling
+`[plan name].review.md`.
 
 The persona prompt is the process contract: a request for one stage authorizes
 that stage only, and the agent stops after each stage and waits for the user.
@@ -87,18 +102,27 @@ Its persona prompt requires it to:
 - establish the contract before editing code — read the plan and the concept it
   references, inspect repository instructions, implementation, tests, and build
   configuration, and identify pre-existing working-tree changes;
-- keep a persistent execution checklist in a task-specific Markdown progress
-  file under `docs`, with stable work-item identifiers, dependencies,
-  completion conditions, and the statuses TODO, IN_PROGRESS, IMPLEMENTED,
-  VERIFIED, and BLOCKED;
-- execute the checklist and update it after each meaningful work item, keeping
-  implementation and verification states distinct;
+- treat the plan as read-only and create the persistent progress file
+  `[plan name].progress.md` beside it, mirroring the plan's steps and substeps
+  with their identifiers and `Depends on:` values unchanged;
+- track every step and substep entry with one status — TODO, IN_PROGRESS,
+  IMPLEMENTED, VERIFIED, or BLOCKED — applying transitions as they happen
+  (IN_PROGRESS before editing), recording verification evidence per entry, and
+  rolling a parent step's status up from its substeps;
+- keep the progress-file header (overall status, status counts, ready-next
+  entries, current blockers) and its resumption snapshot, status register,
+  per-entry records, deviations log, and final verification consistent with the
+  entries;
+- execute the plan's graph, not its listing order: an entry is eligible when it
+  is TODO and every entry it depends on is VERIFIED, and independent branches
+  may run in parallel;
 - implement the entire plan: code, integration, consumer and contract updates,
   removal of replaced paths, tests, and documentation;
-- verify against the plan's acceptance criteria with the repository's own
-  checks, and distinguish checks that ran from checks that could not run;
-- report completion honestly: implemented-but-unverified and blocked items are
-  called out, never reported as passed.
+- verify against the plan's per-entry completion criteria with the repository's
+  own checks, and distinguish checks that ran from checks that could not run;
+- report completion honestly: implemented-but-unverified and blocked entries are
+  called out, never reported as passed, and the report maps steps and substeps
+  to their final statuses.
 
 It implements the approved task and nothing beyond it, does not preserve legacy
 compatibility unless the plan requires it, and does not expand scope in the
@@ -142,22 +166,34 @@ Implementer applies corrections after approval.
 
 Its persona prompt requires it to:
 
-- establish the review contract first: the task, concept, and plan; the changes
-  belonging to the implementation; and the baseline to compare against,
-  including pre-existing uncommitted changes;
+- establish the review contract first: the task, concept, and plan; the
+  implementer's `[plan name].progress.md`; the changes belonging to the
+  implementation; and the baseline to compare against, including pre-existing
+  uncommitted changes;
 - inspect both the diff and the surrounding context — related contracts,
   callers, tests, and documentation — and request a baseline commit or commit
   range when the change boundaries are unclear;
+- create the review file `[plan name].review.md` beside the plan, keep it current
+  as the review proceeds, and start a new round, not a rewrite, when a review
+  file from an earlier round exists;
 - verify every plan item and acceptance criterion, behavioral correctness and
   error handling, edge cases, integration, test coverage, unrequested
   functionality, removal of obsolete paths, unjustified complexity, and
   documentation consistency;
+- treat the progress file as the implementer's claim, not as proof: cross-check
+  every recorded status and verification statement against the implementation,
+  the diff, and checks it performs or inspects;
+- assign each step and substep one review status — CONFORMS,
+  PARTIALLY_CONFORMS, DOES_NOT_CONFORM, NOT_IMPLEMENTED, NOT_VERIFIED, or
+  NOT_REVIEWED — and each finding one severity (BLOCKER, MAJOR, MINOR,
+  SUGGESTION) with a stable identifier and a correction proposal;
 - run only safe local checks, distinguish confirmed defects from hypotheses, and
   record checks that could not be performed;
-- deliver a report with the overall status, item statuses, findings ordered by
-  severity, and location, issue, impact, and proposed correction per finding;
-- propose a concrete set of corrective changes and request approval, then stop —
-  without applying corrections.
+- finalize the review file with an overall status — CONFORMS,
+  PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE — and deliver a chat
+  report that agrees with it;
+- propose a concrete, dependency-ordered set of corrective changes and request
+  approval, then stop — without applying corrections.
 
 ### Toolset
 
@@ -166,7 +202,7 @@ Its persona prompt requires it to:
 | Identity | `persona` with the reviewer prompt |
 | Repository conventions | `agent-instructions` reads `AGENTS.md` and compatible instruction files (64 KiB) |
 | Terminal | `tool-pwsh` on Windows, `tool-bash` elsewhere; exactly one is enabled, for diffs, history, and safe checks |
-| Files (inspection only) | `tool-fs` with `write: false` and `edit: false`: the write and edit tools are never registered |
+| Files (review file only) | `tool-fs` with read, images, write, and edit enabled solely so the reviewer can create and maintain `[plan name].review.md` |
 | Search | `tool-fs-search` (`glob`, `grep`) |
 | Background work | `tool-jobs` for long builds and test suites |
 | Skills | `skill-filesystem` and `tool-skill` (project `.dsh/skills` and `.agents/skills`, custom, user roots) |
@@ -175,15 +211,16 @@ Its persona prompt requires it to:
 | External references | `tool-web` (search and fetch) |
 | Context | `time-context` |
 
-The read-only file configuration is the one place where a preset enforces its
-contract technically instead of relying on the persona alone.
+The reviewer's write and edit access is deliberately narrow: the persona contract
+limits it to the review file, while implementation code, the plan, and the
+progress file stay read-only.
 
 ### Deliberate omissions
 
 | Omitted | Why |
 |---|---|
-| Write and edit file tools | Review ends with a report and a proposed correction set; the Implementer applies approved corrections. `tool-fs` registers neither tool. |
-| Web plan mode (`dsh-plan-mode`, `exit_plan_mode`) | Review is read-only by construction and the persona defines the stop-and-approve boundary; a mode gate would add a second approval channel. |
+| Write and edit beyond the review file | The tools are enabled for the review file only; the persona contract forbids writing implementation code, the plan, or the progress file, and corrections go to the Implementer after approval. |
+| Web plan mode (`dsh-plan-mode`, `exit_plan_mode`) | The persona defines the stop-and-approve boundary and the review file is its only write target; a mode gate would add a second approval channel. |
 | Goals (`command-goal`, `tool-goal`) | The review report ends the stage; automatic continuation rounds would outlive the request. |
 | Schedules (`tool-schedule`) | No part of the role is time-driven. |
 | Delegation (`subagent*`, `workflow*`) | Reviewing is this preset's own work; delegation would split the verification record. |
@@ -325,11 +362,13 @@ session keeps the composition it started with.
    investigate and produce a concept document under `docs` instead of changing
    implementation code, then stop for approval.
 5. In an Implementer session, point it at a plan document: it should create the
-   progress file under `docs`, implement the plan, run the plan's checks, and
-   report each item as implemented, verified, blocked, or unverified.
-6. In a Reviewer session, point it at a plan and an implementation range: it
-   should report findings by severity with proposed corrections and must not
-   edit files — the write and edit tools are not registered for this preset.
+   `[plan name].progress.md` file beside the plan, implement the plan's graph,
+   run the plan's checks, and report each step and substep as implemented,
+   verified, blocked, or unverified.
+6. In a Reviewer session, point it at a plan, its progress file, and an
+   implementation range: it should create `[plan name].review.md`, report
+   findings by severity with proposed corrections, and change no file other than
+   the review file.
 7. Open **Settings → Development Presets**: the page lists providers, models,
    and efforts from the live catalog, and a saved route applies to new sessions
    without a restart.
@@ -362,7 +401,7 @@ lib/plugin.js                 preset/model wiring, catalog route, settings polic
 cordis.patch.yml              bundle patch inserting the Host plugin row
 presets/architect.patch.yml   Architect declaration: persona prompt + concept/planning toolset
 presets/implementer.patch.yml Implementer declaration: persona prompt + execution toolset
-presets/reviewer.patch.yml    Reviewer declaration: persona prompt + read-only review toolset
+presets/reviewer.patch.yml    Reviewer declaration: persona prompt + review toolset
 presets/                      one file per preset role
 locale/en.json                Plugin Manager title and description (English)
 locale/ru.json                Plugin Manager title and description (Russian)
@@ -393,10 +432,11 @@ preset ids and roster orders unique. See [CONTRIBUTING.md](CONTRIBUTING.md).
   `/dev-presets/models` route and writes through the Settings service; that
   route serves provider, model, and reasoning metadata only, never credentials.
 - A preset is a composition, not a security sandbox: its YAML and the plugins it
-  mounts can execute Host code. The approval boundaries and scope rules in the
-  preset prompts are instructions to the model, not a technical enforcement
-  layer. Use session approval settings for enforcement; the reviewer's
-  read-only `tool-fs` config is the only tool-level restriction in this bundle.
+  mounts can execute Host code. The approval boundaries, the scope of the review
+  file, and the write rules in the preset prompts are instructions to the model,
+  not a technical enforcement layer. Use session approval settings for
+  enforcement; the reviewer needs write access to its review file, so this bundle
+  applies no tool-level write restriction.
 
 ## Links
 

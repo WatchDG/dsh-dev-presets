@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-29
+
+### Added
+
+- Sibling documents for the Architect → Implementer → Reviewer handoff: a plan
+  named `YYYYMMDD-NN-slug.md` with a step/substep dependency graph, the
+  implementer's `[plan name].progress.md` execution record, and the reviewer's
+  `[plan name].review.md` review record.
+- Implementer progress file: per-step and per-substep statuses with explicit
+  transitions, parent-step roll-up, a status register, a resumption snapshot, a
+  deviations and blockers log, and a final verification section.
+- Reviewer review file: review rounds, an item review register, numbered findings
+  with severities and statuses, a checks-and-evidence section, a progress-file
+  assessment, dependency-ordered proposed corrections, and an overall status of
+  CONFORMS, PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE.
+
+### Changed
+
+- Architect planning starts only on the user's explicit request for the plan, and
+  the plan is a directed acyclic graph: stable step identifiers, explicit
+  `Depends on:` lines, one optional nested level of substeps, parallel execution
+  levels, and an approximate `Estimated context:` (`S`, `M`, `L`) sized against
+  a 128k–256k window. The plan records no execution state.
+- Implementer treats the plan as read-only, executes the plan's graph rather than
+  its listing order, and keeps execution state only in the progress file.
+- Reviewer may create and update only its review file: `tool-fs` enables write
+  and edit for it, the persona contract forbids every other change, and the
+  implementer's progress file is treated as a claim to verify.
+
 ## [1.0.1] - 2026-10-28
 
 ### Changed
@@ -56,5 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI on Linux and Windows with Node.js 20, 22, and 24.
 - Documentation in English and Russian, contribution guide, Apache-2.0 license.
 
+[1.1.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.1.0
 [1.0.1]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.1
 [1.0.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.0

@@ -1,6 +1,6 @@
 {
   "name": "dsh-dev-presets",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Development-role agent presets for DeepSeek Harness: declarative bundle presets that compose a session's identity, tools, prompt sections, and context.",

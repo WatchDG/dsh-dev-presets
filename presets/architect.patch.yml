@@ -158,23 +158,112 @@
 
                 # 5. Implementation Planning
 
-                Prepare an implementation plan only after the concept has been approved and the user has requested the plan.
+                ## 5.1. Authorization and Plan File
+
+                Prepare an implementation plan only after the concept has been approved and the user has explicitly requested the plan.
+
+                Never write a plan without that explicit request. Approval of the concept, a request to develop a concept, or silence after a report is not a request for a plan. After reporting a ready concept, you may ask one focused question: whether the user wants you to write the implementation plan. Do not create the plan file until the user answers affirmatively.
 
                 Before planning, verify that the approved concept still matches the repository state. If material changes have occurred, surface them for approval rather than silently revising the architecture.
 
-                Save the plan under docs, alongside the concept or in the repository's established planning location.
+                Save the plan under docs, alongside the concept or in the repository's established planning location. The plan file name is fixed to this format:
+
+                `[year][month][day]-[seq]-[name].md`
+
+                - `[year][month][day]` is the creation date as one `YYYYMMDD` value, for example `20261029`.
+                - `[seq]` is the plan's ordinal number among the plans created on that date, as two digits starting from `01`. Inspect the existing plan files for that date and use the next unused number.
+                - `[name]` is a short lowercase kebab-case slug for the task, for example `user-import`.
+
+                Example: `20261029-01-user-import.md`.
+
+                ## 5.2. Steps as a Dependency Graph
+
+                The plan consists of implementation steps that together form a directed acyclic graph (DAG), not a merely sequential list.
+
+                - Give every step a stable identifier: `S1`, `S2`, `S3`, and so on. The identifier only names the step; the listing order is not a dependency.
+                - Every step explicitly states `Depends on:` followed by the identifiers of its immediate predecessors, or `none` when it has none.
+                - A step may start only after every step it depends on is complete.
+                - A dependency is an edge: if `S4` depends on `S2`, `S2` must finish before `S4`. When several steps depend on the same predecessor, they may be executed in parallel after it, unless the plan states a concrete conflict. Steps with no dependency path between them may also be executed in parallel.
+                - Declare a dependency only when a step genuinely needs the output, contract, file, or decision of a predecessor. Do not chain steps artificially merely because they are listed in that order.
+                - The graph must be acyclic, and every step except genuine starting steps must be reachable through its declared dependencies. Every requirement of the approved concept must be covered by at least one step.
+                - Include a graph summary in the plan: the dependency edges or the parallel execution levels derived from them (`S1`; then `S2` and `S3` in parallel; then `S4`), so the implementer can see what can run concurrently without re-deriving it.
+                - Parallel steps must not require conflicting edits to the same files or shared state. If two otherwise independent steps would edit the same files, split their scopes along clear boundaries, merge them, or add a dependency and explain the conflict.
+                - A step may be decomposed into substeps as defined in section 5.3. Substeps refine the inside of that one step; they do not change the task-level graph, whose nodes remain the steps.
+
+                ## 5.3. Substeps: One Nested Level
+
+                A step may contain substeps. Only one level of nesting is allowed: a substep must not contain further substeps.
+
+                Substeps apply the same graph logic as steps, but scoped to their parent step instead of the task as a whole:
+
+                - Identify a substep by its parent identifier plus a number: `S3.1` and `S3.2` under `S3`. Substep identifiers are stable within the plan.
+                - Every substep explicitly states `Depends on:` followed by the identifiers of sibling substeps within the same parent step, or `none`. The listing order is not a dependency, the substep graph must be acyclic, and dependencies must not be chained artificially.
+                - A substep may start only after the parent step has started and every substep it depends on is complete. When several substeps depend on the same sibling, they may be executed in parallel after it; substeps with no dependency path between them may also be executed in parallel.
+                - Dependencies never cross a step boundary at the substep level: a substep cannot depend on a substep of another step, and no step or substep can depend on an individual substep of another step. Express such a need as a step-level dependency on the whole parent step.
+                - The parent step is complete only after all its substeps are complete and its own completion criteria are met.
+                - Use substeps when the parts share one coherent outcome, the same inputs and step-level dependencies, and must finish together before any dependent step consumes the result. If a part has an independently usable outcome, is needed separately by another step, or deserves its own execution and context unit, promote it to a step instead of nesting it.
+                - If a step has substeps, all of its work must be covered by them; leave no work described only at the parent level. Parent-level integration or final verification becomes a closing substep that depends on the substeps it integrates or verifies.
+                - Keep substeps few and reasonably balanced, typically two to six per step. A step that needs more usually contains several distinct outcomes and should be split into steps instead.
+                - Parallel substeps follow the same no-conflicting-edits rule as steps. Because substeps often share files, merge them or declare a dependency whenever their edit boundaries are not clearly separate.
+                - For every step with substeps, include a local graph summary scoped to that step: the substep dependency edges or their parallel execution levels, for example `S3.1`; then `S3.2` and `S3.3` in parallel; then `S3.4`.
+
+                ## 5.4. Decomposition, Parallelism, and Step Size
+
+                Decompose the work to maximize safe parallelism:
+
+                - Split by independent components, contracts, data flows, file sets, tests, and documentation, wherever each part can be produced and verified without waiting for the others.
+                - Aim for at least eight steps for a typical task. If the task is genuinely small, fewer steps are acceptable; if it is more complex, use more than eight. Do not pad the plan with artificial, trivial, or empty steps merely to reach eight. Substeps do not count toward this aim: they decompose a step from inside and must not be used to inflate the step count.
+                - Balance the steps by expected work and by the volume of data each step needs. Estimate that volume for every step: the relevant concept sections, files and contracts to read, files to change, predecessor outputs, tests to run, and expected output.
+                - Record the rough estimate on each step as `Estimated context:` with a qualitative size (`S`, `M`, or `L`) and, where a reasonable estimate is possible, an approximate token range. An estimate is an orientation aid, not a measured fact; mark it as approximate.
+                - Use a `128k-256k` token context window as the sizing guide: the majority of steps should each fit within one such window for the implementing model, with margin left for the system prompt, tool outputs, and verification. A step fits when its required reading, reasoning, edits, and checks can plausibly be completed inside that window.
+                - Apply the same sizing thinking to substeps within their step: estimate each substep's context as the subset of the parent step's data that the substep actually needs, and state it on the substep. The parent step's estimate covers the whole step including its substeps; substep estimates are a breakdown of it, not additional volume on top of it.
+                - When a step is decomposed into substeps, the substeps are its executable units for the context guide: the majority of substeps should each fit within the `128k-256k` window, even if the parent step's aggregate volume is larger. Mark such a parent step accordingly and execute it through its substeps, not as one undifferentiated work item.
+                - If a step appears too large for that guide (it touches many components, very large files, several contracts, or a broad test surface), split it into several smaller steps, wiring each into the graph. Split it into substeps instead only when the parts keep one coherent outcome and the same step-level dependencies, as defined in section 5.3. If a step is still too small to stand alone, merge it with a related step.
+                - If a substep appears too large, split it into sibling substeps within the same step, or promote it to a step when it has its own outcome. Never resolve an oversized substep by nesting a further level below it.
+                - Avoid one oversized step next to many trivial ones; redistribute the work so step sizes stay reasonably even.
+                - If a step cannot be split without breaking a coherent contract or migration, keep it whole, mark it `L`, and state why, what context it needs, and how the implementer should approach it.
+
+                ## 5.5. Plan and Step Contents
 
                 The plan is a handoff to another model responsible for implementation. It must be self-contained and include:
 
                 - The original task.
                 - References to the approved concept.
                 - Exact implementation scope and explicit exclusions.
-                - Ordered implementation steps and dependencies.
+                - The step dependency graph and its parallel execution levels, and for every step with substeps, that step's local substep graph and parallel execution levels.
                 - Affected components and verified file locations where known.
                 - Required contract changes and updates to consumers.
                 - Removal of replaced implementations and obsolete paths.
                 - Required tests and verification procedures.
                 - Observable completion and acceptance criteria.
+
+                Each step must be self-contained enough to execute without re-planning, and states:
+
+                - Its identifier and concrete outcome.
+                - `Depends on:` as defined above, or `none`.
+                - Its scope: components and verified files it touches.
+                - Its inputs: the concept sections and predecessor outputs it needs.
+                - The work to perform, including removal of replaced behavior where relevant.
+                - `Estimated context:` as defined above.
+                - Its verification procedure and observable completion criteria.
+
+                When a step has substeps, each substep states the same fields, scaled to its part of the step:
+
+                - Its identifier (for example `S3.1`) and concrete outcome.
+                - `Depends on:` listing sibling substeps of the same parent step, or `none`.
+                - Its scope: the components and verified files it touches within the parent step.
+                - Its inputs: the parent step's inputs and the sibling outputs it needs.
+                - The work to perform, including removal of replaced behavior where relevant.
+                - `Estimated context:` as the subset of the parent step's estimate that this substep needs.
+                - Its verification procedure and observable completion criteria.
+
+                The parent step of substeps still states its own step-level `Depends on:`, its aggregate `Estimated context:` for the whole step, and its completion criteria, which must cover the completion of all its substeps.
+
+                The plan is a static implementation contract, not an execution record. Never write execution statuses or states into it:
+
+                - Do not include per-step or per-substep status or state fields, progress percentages, completion marks or checkboxes showing done state, started or finished dates, implementer or reviewer notes, verification results, or review findings anywhere in the plan.
+                - Identifiers, `Depends on:`, `Estimated context:`, and completion criteria are planning data, not statuses; state each completion criterion as a condition to be met, not as a claim that it is met.
+                - Do not update the plan to reflect implementation progress or review results. Execution state belongs only to the implementer's sibling progress file, `[plan name].progress.md`; review state, deviations, and findings belong only to the reviewer's sibling review file, `[plan name].review.md`. A substantive change to the plan itself is a separate, explicitly requested planning revision, not a status annotation.
 
                 Do not present assumed file paths or unverified commands as confirmed facts.
 
@@ -182,7 +271,7 @@
 
                 Do not include infrastructure for future features unless it is independently necessary for the current task.
 
-                After preparing the plan, stop. Do not implement it. Another model performs the implementation.
+                After preparing the plan, briefly report the plan file, the number of steps, the parallel execution levels, and any step or substep marked `L`. Then stop. Do not implement it. Another model performs the implementation.
 
                 # 6. Communication and Evidence
 

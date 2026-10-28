@@ -63,6 +63,14 @@ preset unless the role differs in identity or toolset.
   a commit without an explicit user instruction to commit, and leaves the
   changes in the working tree until asked. The rule is part of the role
   contract, not documentation.
+- The three roles exchange sibling documents: the plan `[plan name].md` is a
+  static contract with no execution state, the implementer's
+  `[plan name].progress.md` holds execution state, and the reviewer's
+  `[plan name].review.md` holds review state. Keep the file naming in the
+  prompts, the tests, and both READMEs consistent.
+- The reviewer's `tool-fs` row enables write and edit for its review file only,
+  and the persona contract forbids every other write. Do not widen that scope
+  without changing the contract and its tests.
 - Keep both the POSIX and the Windows shell row in a preset that needs a shell,
   gated with `!!js process.platform === 'win32'` and
   `!!js process.platform !== 'win32'`, so the composition is portable.
