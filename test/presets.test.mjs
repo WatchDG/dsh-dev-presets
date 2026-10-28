@@ -257,6 +257,11 @@ test('the architect persona prompt is the complete concept-and-plan contract', (
     'Do not perform their stages.',
     'Do not produce a step-by-step implementation plan or modify implementation code during this stage.',
     'The plan is a static implementation contract, not an execution record.',
+    '`Plan revision:` an integer starting at `1`.',
+    'each with a stable identifier: `AC1`, `AC2`, and so on.',
+    '`Produces:` the concrete outputs it delivers for dependent steps and for verification',
+    'Connectivity to a single root is not required',
+    'Before reporting the plan, validate it against this checklist',
     'Store these ideas in potential_future_features at the repository root.',
     'Another model performs the implementation.',
     'Do not expand scope in the name of clean architecture or future extensibility.',
@@ -365,7 +370,13 @@ test('the implementer persona prompt is the complete execution contract', () => 
     'Before changing implementation code, create the persistent progress file for the entire approved plan.',
     'IMPLEMENTED: the required changes are present, but the entry\'s own verification is incomplete, not yet run, or not yet passing.',
     'VERIFIED: the changes are present, the entry\'s verification procedure has been executed, and its completion criteria are met with recorded evidence.',
-    'When you pick up a step or substep for work, set it IN_PROGRESS in the progress file before making its implementation changes.',
+    'When you pick up a leaf step or substep for work, set it IN_PROGRESS in the progress file before making its implementation changes.',
+    'A leaf (a step without substeps, or a substep) is an executable work unit.',
+    'keep exactly one leaf entry IN_PROGRESS at a time',
+    'The per-entry `Status:` field is the single authoritative status of that step or substep',
+    'its `Plan revision:`, and a checksum of the plan file at start',
+    'A review correction round starts only when the user explicitly instructs you to apply corrections',
+    'The review file is read-only for you: never edit it, mark findings corrected in it, or change its statuses.',
     'Never report an unexecuted check as passed.',
     'Do not weaken assertions, disable checks, delete relevant tests, or change expected results merely to obtain a passing result.',
     'Report only what the implementation and executed checks support.',
@@ -471,15 +482,66 @@ test('the reviewer persona prompt is the complete review contract', () => {
     'The plan and the implementer\'s progress file are read-only for you: never edit them, annotate them, or record review state in them.',
     'Treat the progress file as the implementer\'s claim, not as proof',
     'they are applied by the implementation agent, not by you.',
-    'If the change boundaries cannot be determined reliably, request a baseline commit, commit range, or another precise reference.',
+    'If the change boundaries cannot be determined reliably from the recorded baseline, request a baseline commit, commit range, or another precise reference.',
     'Potential future features are not review requirements. Their absence is not a defect.',
     'Distinguish confirmed defects from hypotheses and optional improvements.',
     'Never claim to have inspected files or executed checks that you have not actually inspected or executed.',
     'Overall status: CONFORMS, PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE.',
+    'Determine the review type before reviewing individual items',
+    '`Owner:` who must act on the finding',
+    'ACCEPTED_DEVIATION, may be set only when the user explicitly instructs you to accept the deviation',
+    'Item summary counts in the header are computed over leaf entries only',
+    'The only path your review may have created or changed is the review file itself',
     'If issues are found, propose a specific set of corrective changes and request approval. Do not apply corrections before approval.',
     'Do not expand scope in the name of clean architecture or future extensibility.',
   ]
   for (const sentence of required) {
     assert.ok(prefix.includes(sentence), `prompt keeps: ${sentence}`)
   }
+})
+
+test('the three personas share one sequential plan/progress/review contract', () => {
+  const personaOf = (id) => {
+    const declaration = declarations.find((entry) => configOf(entry).id === id)
+    assert.ok(declaration, `the ${id} preset exists`)
+    return pluginsOf(declaration).find((plugin) => plugin.id === 'persona').config.prefix
+  }
+  const architect = personaOf('architect')
+  const implementer = personaOf('implementer')
+  const reviewer = personaOf('reviewer')
+  const all = { architect, implementer, reviewer }
+
+  // One artifact trio, derived from the plan file name, named identically by
+  // every stage so a handoff never depends on chat history.
+  for (const [id, prefix] of Object.entries(all)) {
+    assert.ok(prefix.includes('[plan name].progress.md'), `${id} names the progress file`)
+    assert.ok(prefix.includes('[plan name].review.md'), `${id} names the review file`)
+    assert.ok(prefix.includes('Plan revision:'), `${id} binds work to a plan revision`)
+    assert.ok(prefix.includes('handoff block'), `${id} ends its stage with a handoff block`)
+  }
+
+  // The architect's acceptance criteria identifiers are consumed downstream.
+  assert.ok(architect.includes('`AC1`, `AC2`'), 'architect issues AC identifiers')
+  assert.ok(implementer.includes('AC identifiers from the plan'), 'implementer records AC identifiers')
+  assert.ok(reviewer.includes('`AC` identifiers'), 'reviewer reports against AC identifiers')
+
+  // Leaf entries are the executable and countable units in both downstream
+  // stages; parent steps are roll-ups.
+  assert.ok(implementer.includes('is an executable work unit'), 'implementer defines leaf entries')
+  assert.ok(reviewer.includes('computed over leaf entries only'), 'reviewer counts leaf entries only')
+
+  // The progress status vocabulary the reviewer cross-checks is the one the
+  // implementer writes.
+  for (const status of ['TODO', 'IN_PROGRESS', 'IMPLEMENTED', 'VERIFIED', 'BLOCKED']) {
+    assert.ok(implementer.includes(status), `implementer defines progress status ${status}`)
+    assert.ok(reviewer.includes(status), `reviewer knows progress status ${status}`)
+  }
+
+  // The correction loop is closed on both sides: the reviewer routes
+  // findings by owner, and the implementer executes approved findings
+  // against a read-only review file.
+  assert.ok(reviewer.includes('`Owner:`'), 'reviewer routes findings by owner')
+  assert.ok(implementer.includes('## 9.1. Corrections from a Review'), 'implementer has a correction mode')
+  assert.ok(implementer.includes('The review file is read-only for you'), 'implementer never edits the review file')
+  assert.ok(reviewer.includes('CONFIRMED_CORRECTED'), 'reviewer confirms corrections in a later round')
 })

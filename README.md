@@ -55,6 +55,18 @@ verification results: execution state belongs to the implementer's sibling
 `[plan name].progress.md`, and review state to the reviewer's sibling
 `[plan name].review.md`.
 
+Each plan starts with a document header — `Task:`, `Plan revision:`, `Created:`,
+`Concept:` with its approval reference, and `Supersedes:` — and gives every
+acceptance criterion a stable identifier (`AC1`, `AC2`, ...) plus a traceability
+list mapping criteria to the steps and substeps that deliver them. Steps are not
+required to converge on a single root: several `Depends on: none` starting points
+are legitimate parallel branches. Every step and substep states `Acceptance
+criteria:`, `Consumes:`, `Produces:`, `Prerequisites:`, `Estimated context:`, and
+a verification procedure with its expected result. The architect validates the
+plan against these rules before reporting it and ends the stage with a handoff
+block naming the plan path and its revision, the concept, and the expected
+progress file.
+
 The persona prompt is the process contract: a request for one stage authorizes
 that stage only, and the agent stops after each stage and waits for the user.
 That contract also covers the repository conventions the role must follow —
@@ -105,24 +117,34 @@ Its persona prompt requires it to:
 - treat the plan as read-only and create the persistent progress file
   `[plan name].progress.md` beside it, mirroring the plan's steps and substeps
   with their identifiers and `Depends on:` values unchanged;
-- track every step and substep entry with one status — TODO, IN_PROGRESS,
-  IMPLEMENTED, VERIFIED, or BLOCKED — applying transitions as they happen
-  (IN_PROGRESS before editing), recording verification evidence per entry, and
-  rolling a parent step's status up from its substeps;
-- keep the progress-file header (overall status, status counts, ready-next
-  entries, current blockers) and its resumption snapshot, status register,
+- distinguish executable leaf entries (a step without substeps, or a substep)
+  from roll-up entries: a step with substeps carries no work of its own, and a
+  single agent keeps exactly one leaf IN_PROGRESS at a time;
+- bind the progress file to the exact plan version and repository state: header
+  `Plan revision:`, plan-file checksum at start, baseline (HEAD and pre-existing
+  working-tree changes), and a changed-files manifest; if the plan revision
+  changes mid-flight it blocks and asks instead of silently continuing;
+- track every leaf entry with one authoritative per-entry status — TODO,
+  IN_PROGRESS, IMPLEMENTED, VERIFIED, or BLOCKED — append every transition to an
+  append-only Status Transition Log, record verification evidence per entry, and
+  roll a parent step's status up from its substeps;
+- keep the progress-file header (overall status, leaf counts, ready-next leaves,
+  current blockers, correction rounds) and its resumption snapshot, entry index,
   per-entry records, deviations log, and final verification consistent with the
   entries;
-- execute the plan's graph, not its listing order: an entry is eligible when it
-  is TODO and every entry it depends on is VERIFIED, and independent branches
-  may run in parallel;
+- execute the plan's graph, not its listing order: a leaf entry is eligible when
+  it is TODO and every entry it depends on is VERIFIED, and the plan's parallel
+  branches define which leaf may be picked next;
 - implement the entire plan: code, integration, consumer and contract updates,
   removal of replaced paths, tests, and documentation;
 - verify against the plan's per-entry completion criteria with the repository's
   own checks, and distinguish checks that ran from checks that could not run;
+- in a correction round that the user explicitly requests, treat the review file
+  as read-only, reopen the affected leaf entries, address only the approved
+  findings owned by the Implementer, and end with a re-review handoff;
 - report completion honestly: implemented-but-unverified and blocked entries are
-  called out, never reported as passed, and the report maps steps and substeps
-  to their final statuses.
+  called out, never reported as passed, the report maps steps and substeps to
+  their final statuses, and it ends with a handoff block for the review stage.
 
 It implements the approved task and nothing beyond it, does not preserve legacy
 compatibility unless the plan requires it, and does not expand scope in the
@@ -170,6 +192,14 @@ Its persona prompt requires it to:
   implementer's `[plan name].progress.md`; the changes belonging to the
   implementation; and the baseline to compare against, including pre-existing
   uncommitted changes;
+- record the review type before reviewing items — FINAL for a completed progress
+  file, INTERIM while work is still under way — and label both the review file
+  and the report accordingly;
+- extract the progress header's binding data — plan revision, plan-file checksum,
+  baseline, and changed-files manifest — and cap the overall status at
+  PARTIALLY_CONFORMS when the plan revision does not match the plan on disk;
+- snapshot the working tree at review start and compare it at the end; the only
+  path the review may have created or changed is the review file itself;
 - inspect both the diff and the surrounding context — related contracts,
   callers, tests, and documentation — and request a baseline commit or commit
   range when the change boundaries are unclear;
@@ -179,21 +209,25 @@ Its persona prompt requires it to:
 - verify every plan item and acceptance criterion, behavioral correctness and
   error handling, edge cases, integration, test coverage, unrequested
   functionality, removal of obsolete paths, unjustified complexity, and
-  documentation consistency;
+  documentation consistency, including dependency order against the Status
+  Transition Log;
 - treat the progress file as the implementer's claim, not as proof: cross-check
   every recorded status and verification statement against the implementation,
   the diff, and checks it performs or inspects;
-- assign each step and substep one review status — CONFORMS,
-  PARTIALLY_CONFORMS, DOES_NOT_CONFORM, NOT_IMPLEMENTED, NOT_VERIFIED, or
-  NOT_REVIEWED — and each finding one severity (BLOCKER, MAJOR, MINOR,
-  SUGGESTION) with a stable identifier and a correction proposal;
+- assign each leaf entry one review status — CONFORMS, PARTIALLY_CONFORMS,
+  DOES_NOT_CONFORM, NOT_IMPLEMENTED, NOT_VERIFIED, or NOT_REVIEWED — derive
+  roll-up steps from their substeps, and count summaries over leaf entries only;
+- give each finding one severity (BLOCKER, MAJOR, MINOR, SUGGESTION), a stable
+  identifier, an `Owner:` (Implementer, Architect, or User), and a correction
+  proposal; ACCEPTED_DEVIATION is set only on an explicit user instruction;
 - run only safe local checks, distinguish confirmed defects from hypotheses, and
   record checks that could not be performed;
 - finalize the review file with an overall status — CONFORMS,
   PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE — and deliver a chat
   report that agrees with it;
-- propose a concrete, dependency-ordered set of corrective changes and request
-  approval, then stop — without applying corrections.
+- propose a concrete, dependency-ordered set of corrective changes owned by the
+  Implementer, route plan and user findings separately, and end with the next
+  stage's handoff block, then stop — without applying corrections.
 
 ### Toolset
 

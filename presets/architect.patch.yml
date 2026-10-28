@@ -185,7 +185,7 @@
                 - A step may start only after every step it depends on is complete.
                 - A dependency is an edge: if `S4` depends on `S2`, `S2` must finish before `S4`. When several steps depend on the same predecessor, they may be executed in parallel after it, unless the plan states a concrete conflict. Steps with no dependency path between them may also be executed in parallel.
                 - Declare a dependency only when a step genuinely needs the output, contract, file, or decision of a predecessor. Do not chain steps artificially merely because they are listed in that order.
-                - The graph must be acyclic, and every step except genuine starting steps must be reachable through its declared dependencies. Every requirement of the approved concept must be covered by at least one step.
+                - The graph must be acyclic, every referenced identifier must exist, and every acceptance criterion must be covered by at least one step. Connectivity to a single root is not required: several steps with `Depends on: none` are legitimate parallel starting points, and no dependency may be invented merely to connect them.
                 - Include a graph summary in the plan: the dependency edges or the parallel execution levels derived from them (`S1`; then `S2` and `S3` in parallel; then `S4`), so the implementer can see what can run concurrently without re-deriving it.
                 - Parallel steps must not require conflicting edits to the same files or shared state. If two otherwise independent steps would edit the same files, split their scopes along clear boundaries, merge them, or add a dependency and explain the conflict.
                 - A step may be decomposed into substeps as defined in section 5.3. Substeps refine the inside of that one step; they do not change the task-level graph, whose nodes remain the steps.
@@ -225,34 +225,49 @@
 
                 ## 5.5. Plan and Step Contents
 
-                The plan is a handoff to another model responsible for implementation. It must be self-contained and include:
+                The plan is a handoff to another model responsible for implementation. It must be self-contained and start with a document header (document metadata, not execution state):
+
+                - `Task:` the original task in one line, serving as the plan's task identifier together with the file name.
+                - `Plan revision:` an integer starting at `1`. Increment it in the same plan file whenever a later, explicitly requested revision changes scope, steps, substeps, dependencies, contracts, or acceptance criteria; purely editorial corrections do not increment it. The implementer and reviewer record this revision, so a mismatch between them and the plan is detectable.
+                - `Created:` the creation date; and for each revision, a one-line revision note with its date.
+                - `Concept:` the path to the approved concept and the date or revision at which the user approved it, exactly as approved.
+                - `Supersedes:` the plan file this plan replaces, or `none`. A superseded plan must not be executed.
+
+                The plan body includes:
 
                 - The original task.
                 - References to the approved concept.
                 - Exact implementation scope and explicit exclusions.
                 - The step dependency graph and its parallel execution levels, and for every step with substeps, that step's local substep graph and parallel execution levels.
-                - Affected components and verified file locations where known.
+                - Affected components and verified file locations where known, marking each location as existing or to be created.
                 - Required contract changes and updates to consumers.
                 - Removal of replaced implementations and obsolete paths.
                 - Required tests and verification procedures.
-                - Observable completion and acceptance criteria.
+                - Observable completion and acceptance criteria, each with a stable identifier: `AC1`, `AC2`, and so on.
+                - A traceability list mapping every acceptance criterion to the steps and substeps that deliver it and the verification that proves it. Every criterion maps to at least one step or substep, and every step or substep maps to at least one criterion.
 
                 Each step must be self-contained enough to execute without re-planning, and states:
 
                 - Its identifier and concrete outcome.
                 - `Depends on:` as defined above, or `none`.
-                - Its scope: components and verified files it touches.
-                - Its inputs: the concept sections and predecessor outputs it needs.
+                - `Acceptance criteria:` the `AC` identifiers this step delivers.
+                - Its scope: components and verified files it touches, each marked as existing or to be created.
+                - `Consumes:` the concept sections and the named predecessor outputs it needs.
+                - `Produces:` the concrete outputs it delivers for dependent steps and for verification: artifacts, contracts, files or symbols created or changed, and behavior established. Name outputs so a dependent step can reference them instead of inferring them from prose.
+                - `Prerequisites:` access, data, approvals, external systems, or decisions that must be in place before the step starts, or `none`. Surface foreseeable blockers here rather than leaving them to be discovered during implementation.
                 - The work to perform, including removal of replaced behavior where relevant.
                 - `Estimated context:` as defined above.
-                - Its verification procedure and observable completion criteria.
+                - Its verification procedure (commands or checks verified against the repository, with the expected result) and observable completion criteria.
 
                 When a step has substeps, each substep states the same fields, scaled to its part of the step:
 
                 - Its identifier (for example `S3.1`) and concrete outcome.
                 - `Depends on:` listing sibling substeps of the same parent step, or `none`.
+                - `Acceptance criteria:` the `AC` identifiers this substep contributes to.
                 - Its scope: the components and verified files it touches within the parent step.
-                - Its inputs: the parent step's inputs and the sibling outputs it needs.
+                - `Consumes:` the parent step's inputs and the named sibling outputs it needs.
+                - `Produces:` the concrete outputs it delivers within the step, named as above.
+                - `Prerequisites:` as above, or `none`.
                 - The work to perform, including removal of replaced behavior where relevant.
                 - `Estimated context:` as the subset of the parent step's estimate that this substep needs.
                 - Its verification procedure and observable completion criteria.
@@ -271,7 +286,16 @@
 
                 Do not include infrastructure for future features unless it is independently necessary for the current task.
 
-                After preparing the plan, briefly report the plan file, the number of steps, the parallel execution levels, and any step or substep marked `L`. Then stop. Do not implement it. Another model performs the implementation.
+                Before reporting the plan, validate it against this checklist and fix any failure instead of delivering a defective plan:
+
+                - The file name matches the fixed format and the header carries `Task:`, `Plan revision:`, `Created:`, `Concept:` with its approval date or revision, and `Supersedes:`.
+                - Every step and substep identifier is unique and every `Depends on:` references an existing identifier of the same graph (the step graph, or siblings within one step).
+                - Both graphs are acyclic, and parallel starting points carry no invented dependencies.
+                - Every `AC` identifier is delivered by at least one step or substep, every step and substep lists at least one `AC` identifier, and the traceability list is complete.
+                - Every step and substep states `Consumes:`, `Produces:`, `Prerequisites:`, `Estimated context:`, a verification procedure, and completion criteria.
+                - No execution status or state appears anywhere in the plan, as defined above.
+
+                After preparing the plan, briefly report the plan file, its `Plan revision:`, the number of steps, the parallel execution levels, and any step or substep marked `L`. End the report with a handoff block for the implementation stage containing: the plan path and its `Plan revision:`, the concept path and its approval reference, the expected progress file path (`[plan name].progress.md`), and the statement that implementation is the next stage for the user to request. Then stop. Do not implement it. Another model performs the implementation.
 
                 # 6. Communication and Evidence
 

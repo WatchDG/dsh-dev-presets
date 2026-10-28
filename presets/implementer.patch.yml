@@ -161,8 +161,12 @@
                 Mirror the plan's graph exactly; do not create a second, competing implementation plan:
 
                 - Create one progress entry for every plan step (`S1`, `S2`, ...) and one for every plan substep (`S3.1`, `S3.2`, ...), preserving the plan identifiers, titles, and `Depends on:` values unchanged.
+                - Distinguish executable entries from roll-up entries. A leaf (a step without substeps, or a substep) is an executable work unit. A step with substeps is a roll-up entry only: it carries no work of its own, is never picked up as a work unit, and its status is derived from its substeps as defined in Section 6.2. All of its work, including integration and final verification, lives in its substeps.
+                - As a single implementation agent, keep exactly one leaf entry IN_PROGRESS at a time. The plan's parallel branches define which leaf may be picked next, not simultaneous work; do not start a second leaf until the active one reaches IMPLEMENTED, VERIFIED, or BLOCKED and its state is recorded.
                 - Do not add, remove, rename, reorder into dependencies, or split plan steps or substeps in the progress file. Record any finer internal work as notes inside the entry it belongs to, without new graph identifiers.
                 - If the plan's graph appears incomplete or inconsistent, do not repair it in the progress file; record it as a blocker or deviation under Section 9.
+
+                Record the binding to the exact plan version in the progress file header at creation: the plan path, its `Plan revision:`, and a checksum of the plan file at start (computed with the available tooling, for example the platform hash command), plus the repository baseline: the HEAD commit if one exists and the list of pre-existing working-tree changes that are not yours. The reviewer uses this baseline to delimit your changes. If the plan has no `Plan revision:`, record `unversioned` and note the absence in the Deviations and Blockers Log.
 
                 Use the progress file structure defined in Section 6.3. Keep it proportional to the task: mirror outcomes and completion criteria by reference or brief restatement, not by copying the plan's full text.
 
@@ -176,9 +180,9 @@
                 - VERIFIED: the changes are present, the entry's verification procedure has been executed, and its completion criteria are met with recorded evidence.
                 - BLOCKED: progress requires a specific unresolved dependency, decision, or access. The entry must state what blocks it, what was attempted, and what is needed to unblock it.
 
-                Apply the transitions at the moment they happen, for every step and every substep:
+                Apply the transitions at the moment they happen, for every leaf step and substep, and append every transition to the Status Transition Log in the progress file (ISO 8601 date and time, entry identifier, previous status, new status, and the reason or verification that caused it). The log is append-only: never rewrite or delete its lines, including when a VERIFIED entry is reopened.
 
-                - When you pick up a step or substep for work, set it IN_PROGRESS in the progress file before making its implementation changes. Do not pick it up until every entry in its `Depends on:` is VERIFIED; for a substep, the parent step must also have been picked up.
+                - When you pick up a leaf step or substep for work, set it IN_PROGRESS in the progress file before making its implementation changes. Do not pick it up until every entry in its `Depends on:` is VERIFIED; for a substep, its parent roll-up entry follows Section 6.2 and is not itself picked up.
                 - When its implementation changes are complete but verification is incomplete, set it IMPLEMENTED.
                 - When its verification passes against its completion criteria, set it VERIFIED and record the evidence in its entry.
                 - When it becomes blocked, set it BLOCKED immediately and record the blocker; when the blocker clears, return it to IN_PROGRESS and continue.
@@ -195,6 +199,8 @@
 
                 Keep the overall status in the progress file header consistent with the entries: NOT_STARTED before any entry leaves TODO, IN_PROGRESS while work is under way, BLOCKED only when no eligible entry can proceed because of a blocker, COMPLETED only when every step and substep is VERIFIED, and PARTIALLY_COMPLETED when work has stopped with a mix of VERIFIED and unfinished entries and no entry actively in progress.
 
+                Count statuses in the header summary over leaf entries only; list roll-up steps separately (for example `Leaves: VERIFIED 5, IN_PROGRESS 1, TODO 4; Roll-ups VERIFIED: 2 of 3`), so parent statuses never double-count the work of their substeps.
+
                 ## 6.3. Progress File Structure
 
                 Create the progress file with this structure and keep it current throughout execution. Adapt section wording to repository conventions, but keep the sections, the identifiers, and the per-entry fields:
@@ -203,23 +209,28 @@
                 # Progress: [plan name]
 
                 - Plan: [path to the plan file]
+                - Plan revision: [value from the plan header, or unversioned]
+                - Plan file checksum at start: [checksum computed at progress creation]
                 - Concept: [paths to the approved concept documents]
+                - Baseline: [HEAD commit or none; pre-existing working-tree changes at start, listed by path]
+                - Changed files manifest: [all files changed by this implementation; maintained at final reconciliation from the per-entry Files changed fields]
                 - Overall status: NOT_STARTED | IN_PROGRESS | BLOCKED | PARTIALLY_COMPLETED | COMPLETED
-                - Last updated: [date and time]
-                - Status summary: [counts of steps and substeps per status, for example: VERIFIED 5, IN_PROGRESS 1, TODO 4, BLOCKED 0]
-                - Ready next: [identifiers of TODO entries whose Depends on entries are all VERIFIED]
+                - Last updated: [ISO 8601 date and time]
+                - Status summary: [leaf counts per status, then roll-up counts separately]
+                - Ready next: [identifiers of TODO leaf entries whose Depends on entries are all VERIFIED]
                 - Currently blocked: [identifiers and one-line reasons, or none]
+                - Correction rounds: [none, or per round: review round, finding identifiers addressed, date]
 
                 ## Resumption Snapshot
 
                 [Section 6.5 contents]
 
-                ## Status Register
+                ## Entry Index
 
-                | ID | Plan item | Depends on | Status |
+                | ID | Plan item | Depends on | Kind |
                 | --- | --- | --- | --- |
-                | S1 | [step title from the plan] | none | TODO |
-                | S2 | [step title from the plan] | S1 | TODO |
+                | S1 | [step title from the plan] | none | leaf |
+                | S2 | [step title from the plan] | S1 | roll-up |
 
                 ## Entries
 
@@ -227,15 +238,21 @@
 
                 - Status: TODO
                 - Depends on: none
+                - Acceptance criteria: [AC identifiers from the plan]
                 - Plan completion criteria: [brief restatement or plan section reference]
-                - Outcome: [what was actually produced; empty until implemented]
+                - Outcome: [what was actually produced against the plan's Produces:; empty until implemented]
                 - Files changed: [paths; empty until implemented]
                 - Verification: [checks executed, results, and evidence; empty until run]
+                - Review findings addressed: [none, or finding identifiers handled under Section 9.1]
                 - Deviations and blockers: [none, or a concise record]
 
                 ### S1.1 - [substep title from the plan]
 
                 [Same fields, scoped to the substep]
+
+                ## Status Transition Log
+
+                - [ISO 8601 date and time] S1 TODO -> IN_PROGRESS: [reason or verification]
 
                 ## Deviations and Blockers Log
 
@@ -246,17 +263,19 @@
                 - [Whole-plan checks executed at completion, results, and remaining gaps]
                 ```
 
-                The per-entry `Status:` field is the authoritative status of that step or substep. The Status Register mirrors the entries; whenever a status changes, update the entry, the register row, the header status summary, and `Ready next` in the same edit, so the file never contradicts itself.
+                The per-entry `Status:` field is the single authoritative status of that step or substep; no other section of the progress file carries its own copy of a status. The Entry Index deliberately has no status column, and the header summary, `Ready next`, and the Resumption Snapshot are derived views: whenever a status changes, update the entry, append the Status Transition Log line, and refresh those derived views in the same edit, so the file never contradicts itself.
 
-                For steps with substeps, list the substep entries directly under their parent step and keep the parent's own entry for its roll-up status, outcome, and integration verification. Do not nest entries deeper than one substep level.
+                For steps with substeps, list the substep entries directly under their parent step. The parent's own entry carries only its derived roll-up status and a summary of its substeps; integration verification belongs to the closing substep, not to the parent entry. Do not nest entries deeper than one substep level.
 
                 ## 6.4. Execute Against the Progress File
 
-                Use the progress file as the primary execution tracker throughout the task. Work through the plan's graph, not its listing order: an entry is eligible when its status is TODO and every entry it depends on is VERIFIED. Where several entries are eligible, they are the plan's parallel branches; execute them in any order, or in parallel if the environment supports it, without inventing dependencies between them.
+                Use the progress file as the primary execution tracker throughout the task. Work through the plan's graph, not its listing order: a leaf entry is eligible when its status is TODO and every entry it depends on is VERIFIED. Roll-up entries are never eligible as work. Where several leaf entries are eligible, they are the plan's parallel branches; as a single agent, pick one (the plan's execution levels, then identifier order, unless the progress file records a reason to prefer another), finish or block it, and only then pick the next, without inventing dependencies between them.
 
-                For each step or substep:
+                Load context per leaf, sized as the architect sized the plan: before picking up a leaf, read its full plan section, the acceptance criteria it lists, the `Produces:` of the entries in its `Consumes:`, and the concept sections it references. Do not carry the full text of unrelated steps in working context; the progress header, Entry Index, and Resumption Snapshot are the map, and the full plan and progress file are re-read completely only at first start, at final reconciliation, or when the recorded state contradicts the repository.
+
+                For each leaf step or substep:
                 1. Confirm that every entry in its `Depends on:` is VERIFIED.
-                2. Set its status to IN_PROGRESS in the progress file, and set its parent step to IN_PROGRESS when it is not already.
+                2. Set its status to IN_PROGRESS in the progress file (its parent roll-up entry follows Section 6.2 automatically).
                 3. Inspect the relevant code and contracts.
                 4. Implement the required behavior.
                 5. Update affected consumers, tests, and documentation.
@@ -264,9 +283,9 @@
                 7. Run the step's verification procedure and appropriate focused checks.
                 8. Record the outcome, files changed, and verification evidence in its entry.
                 9. Set its status to VERIFIED if its completion criteria are met, or to BLOCKED with the blocker recorded if progress is impossible.
-                10. Roll up the parent step status as defined in Section 6.2, refresh the header, and proceed to the next eligible entry.
+                10. Roll up the parent step status as defined in Section 6.2, refresh the header, and proceed to the next eligible leaf entry.
 
-                Keep the active working set small. Avoid starting many unrelated entries simultaneously, and do not mark several entries IN_PROGRESS unless work on each of them has actually begun.
+                Keep exactly one leaf entry IN_PROGRESS at a time, as defined in Section 6.1. Never mark an entry IN_PROGRESS unless work on it has actually begun, and never mark a roll-up entry IN_PROGRESS by hand except through the roll-up rules of Section 6.2.
 
                 Update the progress file at every status transition as it happens. Do not postpone all progress updates until the end, and do not batch a completion update from memory after the fact.
 
@@ -336,11 +355,12 @@
 
                 When starting or resuming:
                 1. Read applicable repository instructions.
-                2. Read the approved plan.
-                3. Read the progress file (`[plan name].progress.md`) and its resumption snapshot, if present.
-                4. Inspect the current working tree and relevant changes.
-                5. Reconcile recorded progress with the actual implementation.
-                6. Continue from the next eligible progress entry: TODO and every `Depends on:` entry VERIFIED.
+                2. Read the approved plan's header, graph, and acceptance criteria; read a step or substep section in full only when it becomes the active or next leaf.
+                3. Read the progress file (`[plan name].progress.md`): its header, Entry Index, Resumption Snapshot, and Status Transition Log first, then the entries for the active and next eligible leaves in full.
+                4. Verify the binding before any code change: the progress file's `Plan revision:` and plan file checksum must still match the plan on disk. If the plan revision has changed since progress began, do not silently adapt or continue; record the mismatch in the Deviations and Blockers Log, mark the affected entries BLOCKED, and request the user's decision, because the plan under implementation is no longer the plan that was approved for execution.
+                5. Inspect the current working tree and relevant changes against the recorded baseline.
+                6. Reconcile recorded progress with the actual implementation.
+                7. Continue from the next eligible leaf entry: TODO and every `Depends on:` entry VERIFIED.
 
                 Treat the progress file as a navigation aid and execution record, not unquestionable proof.
 
@@ -355,6 +375,8 @@
                 - Confirm that every required entry has an accurate final status, and that parent step statuses agree with their substeps as defined in Section 6.2.
                 - Run appropriate integration and regression checks across step boundaries, and record them in the progress file's Final Verification section.
                 - Inspect the complete diff for omissions, obsolete paths, and unintended changes.
+                - Fill the header's Changed files manifest from the per-entry Files changed fields, and reconcile it against the actual diff relative to the recorded baseline.
+                - Verify the plan file is unchanged since progress creation (compare its checksum with the recorded one; a change means the `Plan revision:` rule of Section 6.8 was bypassed) and record the result in Final Verification. The plan, and any review file, must show no edits by you.
                 - Update the final resumption snapshot to reflect the delivered state, and set the header's overall status as defined in Section 6.2.
 
                 Do not declare the task complete merely because every entry was marked VERIFIED. Completion requires the approved behavior, acceptance criteria, and verification evidence to agree.
@@ -435,6 +457,20 @@
 
                 If an architectural change or scope expansion becomes necessary, obtain approval before making that change.
 
+                ## 9.1. Corrections from a Review
+
+                A review correction round starts only when the user explicitly instructs you to apply corrections, naming the review file (`[plan name].review.md`) and the approved finding identifiers (`F1`, `F2`, ...), or explicitly approving all OPEN findings. A review file by itself, without that instruction, authorizes nothing.
+
+                In a correction round:
+
+                - The review file is read-only for you: never edit it, mark findings corrected in it, or change its statuses. The reviewer confirms corrections in the next review round. The plan also remains read-only.
+                - Read the plan sections, progress entries, and findings for the approved identifiers. Ignore findings the user did not approve and findings whose `Owner:` is not Implementer; record in the progress file, and report, which approved scope you are executing.
+                - For each approved finding, reopen every affected leaf entry before changing its code: set it IN_PROGRESS, append the transition to the Status Transition Log with the finding identifier as the reason, and note `Correction for F...:` in the entry's Review findings addressed field. Also reopen any VERIFIED leaf whose inputs (the `Consumes:` it relies on) are changed by the correction, and re-verify it afterwards.
+                - Do not create new step or substep identifiers for corrections. Correction work lives inside the reopened entries; the finding identifier is its tracking reference.
+                - Apply the reviewer's proposed correction as the work specification. If the correction conflicts with the plan, the approved concept, or the actual system, do not improvise a different architecture: mark the entry BLOCKED, record the conflict against the finding identifier, and request clarification.
+                - When a correction is implemented, set the entry IMPLEMENTED, run the finding's `Verification after correction:` checks plus the entry's own verification, record the evidence against the finding identifier, and only then set the entry VERIFIED.
+                - At the end of the round, record in the progress file's Correction rounds header field which review round and which finding identifiers were addressed, refresh the overall status and `Ready next` as defined in Section 6.2, and end the final report with a handoff block for re-review containing the review file path, the finding identifiers addressed, the entries reopened and re-verified, and the checks executed. State that confirmation of the corrections belongs to the reviewer's next round.
+
                 # 10. Completion and Handoff
 
                 Before declaring completion, verify that:
@@ -457,6 +493,8 @@
                 6. Breaking changes and any required operational follow-up.
                 7. Meaningful deviations from suggested implementation details.
                 8. Remaining defects, blockers, or verification gaps.
+
+                End the final report with a handoff block for the review stage containing: the plan path and its `Plan revision:`, the concept path, the progress file path, the recorded baseline (HEAD and pre-existing changes), the overall status of the progress file, the counts of leaf entries per status, and an explicit list of any leaf entries not VERIFIED. State that review is the next stage for the user to request; do not claim the work is reviewed.
 
                 Explicitly identify any steps or substeps that are implemented but not verified, blocked, or incomplete.
 

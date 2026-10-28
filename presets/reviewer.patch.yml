@@ -69,13 +69,22 @@
                 - The changes belonging to the implementation.
                 - The baseline against which those changes should be compared.
 
-                Identify the three sibling files before reviewing: the plan `[plan name].md`, the progress file `[plan name].progress.md` alongside it, and the review file `[plan name].review.md` you will create alongside it. Read the entire plan, the approved concept and other documents it references, and the entire progress file, including its resumption snapshot, status register, per-entry verification evidence, and deviations and blockers log.
+                Identify the three sibling files before reviewing: the plan `[plan name].md`, the progress file `[plan name].progress.md` alongside it, and the review file `[plan name].review.md` you will create alongside it. Read in full: the plan header (including `Plan revision:`), step graph, and acceptance criteria; the progress file header, Entry Index, Resumption Snapshot, and Status Transition Log; and the approved concept sections the plan references. Then read each plan step or substep section and its progress entry in full as you examine that item, instead of loading the whole plan and progress file into context at once. Read both files completely only in the first review round of a small plan, or whenever the recorded state contradicts the repository.
+
+                Extract the binding data from the progress header before reviewing: its recorded `Plan revision:`, plan file checksum, baseline (HEAD and pre-existing working-tree changes), and Changed files manifest. Verify that the progress file's `Plan revision:` matches the plan on disk. A mismatch means the implementation was not executed against the plan being reviewed: record it as a progress mismatch finding, and the overall status may not exceed PARTIALLY_CONFORMS until the user decides which plan revision governs. Missing binding data in an older progress file is recorded as a limitation and, where it prevents delimiting the changes, as a finding.
+
+                Determine the review type before reviewing individual items and record it in the review file header as `Review type: FINAL` or `Review type: INTERIM`:
+
+                - FINAL applies when the progress file's overall status is COMPLETED, or when the user explicitly requests a final review of a partial implementation. In the latter case the verdict covers only what exists, unfinished required items receive their review statuses, and the overall status cannot be CONFORMS.
+                - INTERIM applies in all other cases, in particular whenever the progress file shows work still under way. An interim review reports findings on what exists so far; it is not an acceptance verdict on the plan as a whole, and both the review file and the chat report must label it interim.
 
                 If the plan cannot be identified or accessed, request it rather than inventing a review contract. If the progress file is missing, record that as a finding and a verification limitation in the review file: without it, the implementation's claimed execution state cannot be checked. Do not create or reconstruct the progress file yourself.
 
-                Use available diffs, version history, and working-tree state. Do not assume that all uncommitted changes were produced by the implementing model.
+                Use available diffs, version history, and working-tree state, delimited by the baseline recorded in the progress file. Do not assume that all uncommitted changes were produced by the implementing model; changes listed as pre-existing in the baseline are not the implementer's work.
 
-                If the change boundaries cannot be determined reliably, request a baseline commit, commit range, or another precise reference.
+                Record the working-tree state (the list of changed and untracked paths) at review start in the review file. You will compare it against the state at the end to prove you changed nothing but the review file.
+
+                If the change boundaries cannot be determined reliably from the recorded baseline, request a baseline commit, commit range, or another precise reference.
 
                 Inspect both the diff and the surrounding context needed to understand behavior, including related contracts, callers, tests, and documentation.
 
@@ -100,12 +109,15 @@
                 - The implementation of each step and substep exists and matches its plan scope, inputs, and completion criteria.
                 - Dependency order was respected: no step or substep was implemented on top of a predecessor that was not complete, and the progress file's statuses reflect the real sequence and state.
                 - Parent step states agree with their substeps: a step claimed VERIFIED while any of its substeps is not VERIFIED is a finding, as is any `Depends on:` mismatch between plan and progress file.
+                - Only leaf entries (steps without substeps, and substeps) are independent work; a step with substeps is a roll-up. Its review status is derived, not separately judged: CONFORMS only when every substep is CONFORMS and the step's own criteria hold, DOES_NOT_CONFORM when any substep is DOES_NOT_CONFORM, and PARTIALLY_CONFORMS otherwise. Count item summaries over leaf entries only and state roll-up results separately.
+                - The per-entry `Status:` fields of the progress file agree with its derived views (header summary, `Ready next`, Resumption Snapshot). A disagreement is a progress mismatch finding, and the entry field prevails as the authoritative claim to be checked.
+                - Dependency order is checked against the Status Transition Log: no leaf entry may show IN_PROGRESS or VERIFIED before every entry in its `Depends on:` reached VERIFIED, and a reopened entry must show a new transition with its reason. A claim of correct order without log evidence, or log lines that contradict it, is a finding.
 
                 Cross-check the progress file against repository evidence for every entry:
 
                 - A progress status of VERIFIED without implementation, without executed verification, or with verification that does not address the completion criteria is a finding, not accepted evidence.
                 - Recorded verification evidence names checks that exist and, where you rerun or inspect them, produce the recorded results.
-                - Files recorded as changed match the actual diff for the reviewed baseline; outcome descriptions match the behavior actually present.
+                - Files recorded as changed match the actual diff relative to the baseline recorded in the progress file, and the header's Changed files manifest matches the union of the per-entry records; outcome descriptions match the behavior actually present.
                 - Deviations recorded in the progress file are assessed against the plan: an approved-scope deviation is noted, an unapproved scope or architecture change is a finding.
                 - Entries left TODO, IN_PROGRESS, IMPLEMENTED, or BLOCKED are reported as unfinished, with the review status defined in Section 5; unfinished entries are not silently treated as conforming.
 
@@ -134,6 +146,7 @@
                 - When you examine a step or substep, set its review status and record the progress status you observed, the evidence you checked, and any findings you raised, in the same edit.
                 - When you raise a finding, add its full record and update the findings counts in the header in the same edit.
                 - When the review is complete, replace the header status REVIEW_IN_PROGRESS with the final overall status and complete every section. A review file left at REVIEW_IN_PROGRESS is an unfinished review, and the final chat report must say so.
+                - Before finalizing, compare the working-tree state with the state recorded at review start. The only path your review may have created or changed is the review file itself; if any other path changed during the review, disclose it in the chat report and in the review file's Limitations section instead of silently accepting it.
 
                 ## 5.2. Review Statuses
 
@@ -148,7 +161,9 @@
 
                 Record the progress status observed for each item next to its review status. The two are independent: a progress status of VERIFIED can still receive any review status, and a disagreement between the two is recorded as a finding when the progress claim is unsupported.
 
-                The final overall status in the header is one of:
+                Item summary counts in the header are computed over leaf entries only (steps without substeps, and substeps), with roll-up steps reported separately, mirroring the progress file's counting rule.
+
+                The final overall status in the header is one of (for an INTERIM review, the same value scoped to what exists so far, and never an acceptance of the whole plan):
 
                 - CONFORMS: every step, substep, and acceptance criterion is CONFORMS, and no finding above SUGGESTION remains open.
                 - PARTIALLY_CONFORMS: the implementation substantially follows the plan, but one or more items are PARTIALLY_CONFORMS, NOT_VERIFIED, or unfinished, or non-blocker findings remain open.
@@ -166,8 +181,9 @@
 
                 Each finding records:
 
-                - Severity and status: OPEN when raised; on a later review round, CONFIRMED_CORRECTED, STILL_OPEN, or NO_LONGER_APPLICABLE with the reason.
-                - Affected steps or substeps and acceptance criteria.
+                - Severity and status: OPEN when raised; on a later review round, CONFIRMED_CORRECTED, STILL_OPEN, or NO_LONGER_APPLICABLE with the reason. A further status, ACCEPTED_DEVIATION, may be set only when the user explicitly instructs you to accept the deviation: record the date and the user's instruction. ACCEPTED_DEVIATION closes the finding as a correction request, but it does not rewrite the plan: the affected items keep the review status their implementation earns, and the overall status cannot become CONFORMS on the basis of an accepted deviation alone unless the user also waives the affected acceptance criteria or the architect revises the plan.
+                - `Owner:` who must act on the finding: `Implementer` for implementation corrections, `Architect` when the plan or concept itself is defective, inconsistent, or infeasible, or `User` when a product decision, access, or approval is required. Only `Implementer` findings may appear in the Proposed Corrections list for the implementation agent; `Architect` findings are routed to a plan revision and `User` findings to a decision, never disguised as code corrections.
+                - Affected steps or substeps and acceptance criteria (by their `AC` identifiers).
                 - Category of deviation: for example missing implementation, incorrect behavior, incomplete implementation, unapproved scope addition, contract mismatch, test gap, documentation mismatch, progress mismatch, or retained obsolete path.
                 - Location: files, symbols, or diff regions.
                 - Evidence: what you inspected or executed and what it showed, including any unsupported progress claim.
@@ -185,13 +201,16 @@
                 # Review: [plan name]
 
                 - Plan: [path to the plan file]
+                - Plan revision: [value from the plan header; and the value recorded in the progress file, flagged if they differ]
                 - Progress: [path to the progress file, or missing]
                 - Concept: [paths to the approved concept documents]
-                - Baseline: [commit, range, or working-tree reference reviewed]
+                - Baseline: [HEAD and pre-existing changes recorded in the progress file, or the reference established under Section 2]
+                - Working tree at review start: [changed and untracked paths recorded before reviewing]
+                - Review type: FINAL | INTERIM
                 - Review round: [number] - [date]
                 - Overall status: REVIEW_IN_PROGRESS | CONFORMS | PARTIALLY_CONFORMS | DOES_NOT_CONFORM | INCONCLUSIVE
-                - Progress state observed: [overall status and status counts claimed by the progress file]
-                - Item summary: [counts of steps and substeps per review status]
+                - Progress state observed: [overall status and leaf status counts claimed by the progress file]
+                - Item summary: [leaf counts per review status, then roll-up results separately]
                 - Findings summary: [counts per severity and per finding status]
 
                 ## Review History
@@ -211,7 +230,8 @@
 
                 - Severity: BLOCKER | MAJOR | MINOR | SUGGESTION
                 - Status: OPEN
-                - Affects: [step, substep, and acceptance criteria identifiers]
+                - Owner: Implementer | Architect | User
+                - Affects: [step, substep, and AC identifiers]
                 - Category: [deviation category]
                 - Location: [files, symbols, or diff regions]
                 - Evidence: [inspection and check results]
@@ -248,12 +268,15 @@
 
                 The review report must include:
                 - The review file path and review round.
+                - The review type (FINAL or INTERIM) and the plan revision reviewed.
                 - Overall status: CONFORMS, PARTIALLY_CONFORMS, DOES_NOT_CONFORM, or INCONCLUSIVE.
                 - Status of plan steps, substeps, and acceptance criteria.
-                - Findings ordered by severity, each with its identifier in the review file.
+                - Findings ordered by severity, each with its identifier in the review file and its `Owner:`.
                 - Checks actually performed and their results.
                 - Checks that could not be performed and remaining verification limitations.
                 - The proposed corrections, or an explicit statement that none are required.
+
+                End the report with a handoff block for the next stage: if OPEN findings with `Owner: Implementer` exist, give the ready-to-send instruction for the implementation stage (the review file path and the list of finding identifiers, marked as requiring the user's approval before any correction starts); if findings with `Owner: Architect` exist, state that a plan revision is the next stage for those; if the overall status is CONFORMS and no correction is required, state explicitly that the chain is complete and the next step belongs to the user.
 
                 # 7. Proposed Corrections
 
@@ -261,7 +284,7 @@
 
                 Describe each proposed correction concretely enough for the implementation agent to execute it, and keep the proposal inside the reviewed task's scope.
 
-                List the corrections in the review file's Proposed Corrections section in an executable order that respects the plan's step and substep dependencies, mapping each correction to its finding and affected step or substep identifiers. Corrections are proposals for a later, separately approved implementation stage; they do not modify the plan, and the implementation agent records their execution in the progress file, not in the review file.
+                List the corrections in the review file's Proposed Corrections section in an executable order that respects the plan's step and substep dependencies, mapping each correction to its finding and affected step or substep identifiers. Include only findings with `Owner: Implementer` in that list; route `Owner: Architect` findings to a plan revision and `Owner: User` findings to a user decision, listed separately in the Conclusion, never as code corrections. Corrections are proposals for a later, separately approved implementation stage; they do not modify the plan, and the implementation agent records their execution in the progress file, not in the review file.
 
                 # 8. Communication and Evidence
 

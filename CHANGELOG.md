@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-29
+
+### Added
+
+- Plan header contract: `Task:`, a monotonic `Plan revision:`, `Created:`,
+  `Concept:` with its approval reference, and `Supersedes:`; acceptance criteria
+  as `AC1`, `AC2`, ... with a traceability list mapping each criterion to the
+  steps and substeps that deliver it; per-step `Acceptance criteria:`,
+  `Consumes:`, `Produces:`, and `Prerequisites:` fields; a plan validation
+  checklist and a handoff block at the end of the planning stage.
+- Binding between the artifacts: the progress file records the plan revision,
+  a plan-file checksum, the repository baseline (HEAD and pre-existing changes),
+  and a changed-files manifest; a plan revision that changes mid-flight blocks
+  the implementer instead of silently continuing.
+- Leaf/roll-up split in both downstream stages: a step with substeps is a
+  derived roll-up entry, only leaves are executable, a single agent keeps
+  exactly one leaf IN_PROGRESS, and summaries and item counts are computed over
+  leaves only.
+- Append-only Status Transition Log in the progress file with per-entry
+  transitions, and dependency-order verification by the reviewer against it.
+- Review types (`FINAL` / `INTERIM`), finding `Owner:` routing (Implementer,
+  Architect, User), `ACCEPTED_DEVIATION` on explicit user instruction, and a
+  working-tree snapshot that proves only the review file changed during review.
+- A correction round in the implementer contract: the user names the review file
+  and approved findings, the implementer reopens affected leaf entries, treats
+  the review file as read-only, and ends with a re-review handoff.
+- Handoff blocks that close every stage with the next stage's exact inputs.
+
+### Changed
+
+- Each persona loads the plan graph and progress file by leaf, keeping only the
+  active and next leaf in context instead of the whole documents.
+- The shared bundle tests now enforce the one sequential plan/progress/review
+  contract across all three personas.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added
@@ -85,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI on Linux and Windows with Node.js 20, 22, and 24.
 - Documentation in English and Russian, contribution guide, Apache-2.0 license.
 
+[1.2.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.2.0
 [1.1.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.1.0
 [1.0.1]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.1
 [1.0.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.0

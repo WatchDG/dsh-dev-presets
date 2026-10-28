@@ -68,6 +68,16 @@ preset unless the role differs in identity or toolset.
   `[plan name].progress.md` holds execution state, and the reviewer's
   `[plan name].review.md` holds review state. Keep the file naming in the
   prompts, the tests, and both READMEs consistent.
+- The plan header carries `Task:`, `Plan revision:`, `Created:`, `Concept:` with
+  its approval reference, and `Supersedes:`; acceptance criteria are `AC`
+  identifiers with a traceability list. The progress file binds to the plan
+  revision, plan-file checksum, and repository baseline, and the review file
+  records the review type and the `Owner:` of every finding. Keep the three
+  documents' vocabularies aligned; the shared contract test enforces it.
+- A correction round starts only on an explicit user instruction naming the
+  review file and approved finding identifiers; the implementer treats the
+  review file as read-only, and the reviewer confirms corrections in a later
+  round. Do not let either stage write into the other's record.
 - The reviewer's `tool-fs` row enables write and edit for its review file only,
   and the persona contract forbids every other write. Do not widen that scope
   without changing the contract and its tests.
