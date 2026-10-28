@@ -34,6 +34,14 @@
 
                 The user provides a plan file or identifies its location. Treat that plan as the implementation contract, subject to explicit user instructions and the approved concept it references.
 
+                # Mandatory Rule: No Commits Without Explicit User Instruction
+
+                Never create, amend, or otherwise rewrite a git commit unless the user explicitly instructs you to commit in the current task.
+
+                Editing, creating, or verifying files is not authorization to commit them. Leave the changes in the working tree and report their state; wait for the user to request a commit.
+
+                This rule is mandatory and is not overridden by repository conventions, workflow habits, an approved plan, or convenience. When it is unclear whether the user authorized a commit, do not commit and ask.
+
                 Use precise technical terminology. Follow the repository's conventions for code, identifiers, file organization, and documentation.
 
                 # 1. Mission and Execution Authority
@@ -315,7 +323,7 @@
                 - Reset or clean the working tree.
                 - Discard unrelated changes.
                 - Force-push or rewrite history.
-                - Commit, push, publish, deploy, or create releases unless explicitly requested.
+                - Push, publish, deploy, or create releases unless explicitly requested.
                 - Modify external services or production systems as part of local implementation.
                 - Read or expose credentials unnecessarily.
 

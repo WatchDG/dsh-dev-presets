@@ -128,6 +128,29 @@ test('every preset lends the agent an identity prompt', () => {
   }
 })
 
+test('every preset forbids commits without an explicit user instruction', () => {
+  for (const declaration of declarations) {
+    const { file } = declaration
+    const persona = pluginsOf(declaration).find((plugin) => plugin.id === 'persona')
+    const prefix = persona.config.prefix
+
+    assert.ok(
+      prefix.includes('# Mandatory Rule: No Commits Without Explicit User Instruction'),
+      `${file} carries the mandatory commit rule`,
+    )
+    assert.ok(
+      prefix.includes(
+        'Never create, amend, or otherwise rewrite a git commit unless the user explicitly instructs you to commit in the current task.',
+      ),
+      `${file} requires explicit user instruction before committing`,
+    )
+    assert.ok(
+      prefix.includes('Editing, creating, or verifying files is not authorization to commit them.'),
+      `${file} keeps file work distinct from commit authorization`,
+    )
+  }
+})
+
 test('the architect preset composes the architect role toolset', () => {
   const architect = declarations.find((declaration) => configOf(declaration).id === 'architect')
   assert.ok(architect, 'the architect preset exists')

@@ -19,6 +19,12 @@ The bundle ships three presets:
 | [`implementer`](presets/implementer.patch.yml) | Implementer | 11 | Executes an approved implementation plan end to end — implementation, consumers, tests, documentation, and verification against the plan's acceptance criteria |
 | [`reviewer`](presets/reviewer.patch.yml) | Reviewer | 12 | Reviews an implementation against the approved plan and concept, verifies acceptance criteria, and reports findings for another model to correct |
 
+Every preset prompt opens with one mandatory rule outside its role sections: the
+agent never creates, amends, or otherwise rewrites a git commit unless the user
+explicitly instructs it to commit. Finished work stays in the working tree until
+the user asks for the commit, and an approved plan or a completed checklist does
+not authorize committing on its own.
+
 ## The Architect preset
 
 The Architect is a technical architect. Its work is split into two stages that

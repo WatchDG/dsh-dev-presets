@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-28
+
+### Changed
+
+- Every preset persona prompt now carries one mandatory rule outside the role
+  sections: never create, amend, or otherwise rewrite a git commit without an
+  explicit user instruction to commit. Changes stay in the working tree until
+  the user asks for a commit, and a finished plan or checklist does not
+  authorize committing. `test/presets.test.mjs` enforces the rule for every
+  preset in the bundle.
+
 ## [1.0.0] - 2026-10-26
 
 ### Added
@@ -45,4 +56,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI on Linux and Windows with Node.js 20, 22, and 24.
 - Documentation in English and Russian, contribution guide, Apache-2.0 license.
 
+[1.0.1]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.1
 [1.0.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.0

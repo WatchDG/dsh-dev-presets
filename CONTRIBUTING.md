@@ -58,6 +58,11 @@ preset unless the role differs in identity or toolset.
 - Every preset mounts exactly one `persona` row with a non-empty `prefix`. A
   persona prefix is a template that resolves `{{…}}` groups strictly at render
   time, so do not mention template syntax casually.
+- Every persona prefix carries the bundle-wide mandatory rule outside the
+  numbered role sections: the agent never creates, amends, or otherwise rewrites
+  a commit without an explicit user instruction to commit, and leaves the
+  changes in the working tree until asked. The rule is part of the role
+  contract, not documentation.
 - Keep both the POSIX and the Windows shell row in a preset that needs a shell,
   gated with `!!js process.platform === 'win32'` and
   `!!js process.platform !== 'win32'`, so the composition is portable.
