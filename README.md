@@ -310,8 +310,10 @@ Behavior:
   normally does; the preset route is not reapplied after it.
 - Resumed sessions, subagent sessions, and sessions that already recorded a
   request keep the route logged in their log.
-- First-request routing remains as a fallback when the session controller cannot
-  apply a selection; an explicit model choice still wins there too.
+- The route is committed through the Agent's own durable model selection, the
+  same `model/selection` event a composer choice appends. Since DSH 0.2.2 the
+  step model is fixed before prompt assembly and a request listener may not
+  change it, so the plugin registers no request listener at all.
 - An unknown or unavailable route logs a warning and the current model is kept.
 - The Settings page writes the map live; a profile-patch change is read when
   the profile recomposes. A row override replaces the complete `config`;
@@ -321,8 +323,8 @@ Behavior:
 
 | Requirement | Details |
 |---|---|
-| [DeepSeek Harness](https://www.deepseek.com/en/harness/) | 0.2.x (tested with 0.2.1). The bundle uses the `@deepseek-ai/dsh-agent-preset` registry and the shipped preset plugins; it needs no external binaries. |
-| Node.js | 20 or newer, for the test suite. The Host plugin runs inside the Harness process. |
+| [DeepSeek Harness](https://www.deepseek.com/en/harness/) | 0.2.2 or newer (tested with 0.2.2-rc.1). The bundle uses the `@deepseek-ai/dsh-agent-preset` registry and the shipped preset plugins; it needs no external binaries. The manifest declares this floor as `engines.dsh`. |
+| Node.js | 24.9 or newer, for the test suite. The Host plugin runs inside the Harness process. |
 
 The Host plugin's only runtime dependency is `@deepseek-ai/schemastery`, the
 settings schema library; installing the bundle installs it.
@@ -420,8 +422,8 @@ npm test          # declaration, role-contract, packaging, and metadata checks
 npm run pack:check # verify the npm package contents
 ```
 
-Requirements: Node.js 20 or newer. There is no build step and no runtime
-dependency.
+Requirements: Node.js 24.9 or newer. There is no build step and no runtime
+dependency beyond the settings schema library.
 
 Layout:
 
@@ -430,7 +432,7 @@ index.js                      Host plugin entry: apply + Config export
 client.js                     Settings → Development Presets section for the routes
 lib/config.js                 Volatile route-map schema and live snapshot helpers
 lib/catalog.js                Browser model-catalog payload from the LLM registry
-lib/routes.js                 Route validation, preset lookup, call-config rewrite
+lib/routes.js                 Route validation, preset lookup, selection comparison
 lib/plugin.js                 preset/model wiring, catalog route, settings policy
 cordis.patch.yml              bundle patch inserting the Host plugin row
 presets/architect.patch.yml   Architect declaration: persona prompt + concept/planning toolset
@@ -441,7 +443,7 @@ locale/en.json                Plugin Manager title and description (English)
 locale/ru.json                Plugin Manager title and description (Russian)
 test/manifest.test.mjs        packaging and display-resource checks
 test/presets.test.mjs         declaration and role-contract checks
-test/preset-model.test.mjs    config, catalog, route validation, selection and request wiring checks
+test/preset-model.test.mjs    config, catalog, route validation, selection and preset-switch/creation wiring checks
 package.json                  bundle manifest; dsh.bundle.patch lists cordis.patch.yml and presets/*.patch.yml
 ```
 
@@ -456,8 +458,7 @@ preset ids and roster orders unique. See [CONTRIBUTING.md](CONTRIBUTING.md).
   The plugin runs in the Host process, makes no network access, and collects no
   telemetry: it reads the session preset and model-selection projections, and
   applies a configured route to the session's model selection on preset switch
-  or creation — or to the first request as a fallback — only when a route is
-  configured.
+  or creation — only when a route is configured.
 - Composing a preset mounts the Harness plugins listed in its declaration. Those
   are shipped Harness packages, not code from this repository. The Host plugin
   resolves a configured route through the Harness `llm` service and never reads

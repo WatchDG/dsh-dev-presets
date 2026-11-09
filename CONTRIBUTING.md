@@ -6,10 +6,10 @@ Thanks for considering a contribution to `dsh-dev-presets`.
 
 - Read the [README](README.md) to understand the bundle and its preset roles.
 - The bundle targets [DeepSeek Harness](https://www.deepseek.com/en/harness/)
-  0.2.x and uses the `@deepseek-ai/dsh-agent-preset` declaration format.
+  0.2.2 or newer and uses the `@deepseek-ai/dsh-agent-preset` declaration format.
 - The bundle ships YAML declarations plus one Host plugin that applies the
-  optional per-preset model routes on preset switch, on session creation, and as
-  a first-request fallback, plus its Settings-page browser half. Keep preset
+  optional per-preset model routes on preset switch and on session creation,
+  plus its Settings-page browser half. Keep preset
   files free of deployment-specific models, and keep the route map editable only
   through the plugin's own Config schema.
 - The Host plugin row (`dev-presets-model`) stays in `cordis.patch.yml`, its
@@ -24,10 +24,10 @@ npm test          # declaration, role-contract, packaging, and metadata checks
 npm run pack:check # inspect the files npm would publish
 ```
 
-Requirements: Node.js 20 or newer. There is no build step.
+Requirements: Node.js 24.9 or newer. There is no build step.
 
 Run the tests before opening a pull request. CI runs them on Linux and Windows
-with Node.js 20, 22, and 24.
+with Node.js 24.
 
 ## Adding a preset
 
@@ -51,6 +51,10 @@ preset unless the role differs in identity or toolset.
 - `package.json` declares `dsh.bundle.patch` as an array and every entry exists
   under `presets/`. The manifest test fails when the list and the directory
   disagree.
+- `package.json` declares the harness floor as `engines.dsh` and the Node.js
+  floor as `engines.node`. DSH 0.2.2 rejects a plugin whose declared harness
+  range is unmet, so raising the floor is a release-level decision; the manifest
+  test asserts both values.
 - One file declares one preset row: `- insert:` with a single row whose `name`
   is `@deepseek-ai/dsh-agent-preset`.
 - Preset ids are lowercase kebab-case equal to the file basename; row ids are

@@ -93,6 +93,14 @@ test('the only runtime dependency is the settings schema library', () => {
   assert.ok(pkg.devDependencies.yaml, 'the test suite parses the preset YAML with yaml')
 })
 
+test('the manifest declares the harness and Node.js floors it is written for', () => {
+  // DSH 0.2.2 evaluates `engines.dsh` (else dsh peer dependencies) before
+  // activating a plugin, so an older harness is rejected instead of failing
+  // later against a removed API.
+  assert.equal(pkg.engines.dsh, '>=0.2.2-rc.1')
+  assert.equal(pkg.engines.node, '>=24.9', '0.2.2 raises the Node.js floor to 24.9')
+})
+
 test('every required file exists', () => {
   for (const relative of REQUIRED_FILES) {
     assert.ok(statSync(path.join(root, relative)).isFile(), `${relative} is missing`)

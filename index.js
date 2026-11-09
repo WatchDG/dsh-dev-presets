@@ -8,16 +8,15 @@
  * - switching a blank Session to a configured preset applies the preset's
  *   provider/model as the Session's next model selection, so the composer shows
  *   it at once and a later composer or `/model` choice overrides it normally;
- * - a fresh Session created on a configured preset starts on that route;
- * - the first model request of a Session composed with a configured preset is
- *   still routed as a fallback, so a deployment without a live Session
- *   controller or an already-created Agent keeps the old behavior.
+ * - a fresh Session created on a configured preset starts on that route.
  *
- * It is not a per-request override: once the first request is logged as the
+ * Both paths commit through the Agent's own durable model selection
+ * (`agent.model.select()`), which appends the same `model/selection` event a
+ * composer choice appends. It is not a per-request override and never rewrites
+ * the deployment default model: once the first request is logged as the
  * Session's request header, the usual rules apply again — an explicit model
  * choice through the composer or `/model` wins, and resumed Sessions keep the
- * route recorded in their log. Subagent Sessions are never touched. The
- * deployment default model is never rewritten by the preset switch.
+ * route recorded in their log. Subagent Sessions are never touched.
  *
  * Config: the `presets` map of preset id to provider/model route. It is
  * volatile, so the Settings page (Settings → Development Presets) edits it

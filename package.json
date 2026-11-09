@@ -1,6 +1,6 @@
 {
   "name": "dsh-dev-presets",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Development-role agent presets for DeepSeek Harness: declarative bundle presets that compose a session's identity, tools, prompt sections, and context.",
@@ -29,7 +29,8 @@
     "cordis"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24.9",
+    "dsh": ">=0.2.2-rc.1"
   },
   "main": "index.js",
   "exports": {
@@ -70,12 +71,13 @@
     "client": {
       "platform": "web",
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "~3.18.5"
+    "@deepseek-ai/schemastery": "~3.19.0"
   },
   "devDependencies": {
     "yaml": "^2.9.1"

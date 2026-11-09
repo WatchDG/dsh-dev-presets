@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-09
+
+Adapted to DeepSeek Harness 0.2.2 (developed and tested against 0.2.2-rc.1).
+
+### Changed
+
+- Preset routes are now committed through the Agent's own durable model
+  selection (`agent.model.select()`), the same `model/selection` event a
+  composer choice appends. The previous `sessionController.agents.selectForNextRequest`
+  entry point no longer exists in 0.2.2.
+- Preset switches are observed through the preset registry's dedicated
+  `agent-preset/selected` event instead of a `session/event` append, and the
+  Session's preset is read through `agentPresets.presetForSession()` instead of
+  the deprecated registry-level `sessionProjections.stateOf(session, key)`.
+- The pending-selection guard reads the `modelSelection` projection through
+  `sessionProjections.snapshot(session, keys)`, the supported consumer read.
+- Removed the `agent/request` request listener and the `withRoute` call-config
+  helper. Since 0.2.2 the step model is fixed before prompt assembly, and a
+  request listener that proposes a different route now fails the request, so the
+  fallback path is gone rather than merely inert.
+- `engines.node` is now `>=24.9`, the minimum supported by DSH 0.2.2.
+- `@deepseek-ai/schemastery` is aligned to `~3.19.0`, the version shipped with
+  DSH 0.2.2.
+- CI runs on Node.js 24 only, matching the raised runtime floor.
+
+### Added
+
+- `engines.dsh` (`>=0.2.2-rc.1`) in the bundle manifest: DSH 0.2.2 refuses to
+  install or activate a plugin whose declared harness range is unmet, so the
+  floor is declared rather than discovered at activation.
+- Tests covering the new contract: routing without a request listener, the
+  dedicated preset-switch event, durable selection commits, pending-selection
+  guards, and the removed fallback path.
+
+### Verified
+
+- The three preset declarations, their plugin references, and their per-role
+  tool configs load unchanged on 0.2.2: every referenced package still exists,
+  and each declared config key is still accepted by its plugin's schema.
+- The browser half keeps the 0.2.2 client contract (`window.__ModuleLoader__`
+  module, `configForms.whileServed`, the `settings.section` slot, `locale` and
+  `inject` registration options), so the Settings page needs no change.
+
 ## [1.2.0] - 2026-10-29
 
 ### Added
@@ -120,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI on Linux and Windows with Node.js 20, 22, and 24.
 - Documentation in English and Russian, contribution guide, Apache-2.0 license.
 
+[1.3.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.3.0
 [1.2.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.2.0
 [1.1.0]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.1.0
 [1.0.1]: https://github.com/WatchDG/dsh-dev-presets/releases/tag/v1.0.1

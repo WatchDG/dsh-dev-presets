@@ -1,37 +1,49 @@
 // Model-route plugin: config schema and live snapshot, catalog building,
-// request eligibility, preset-switch and creation-time selection, and the Host
-// request listener. No Harness is required: the tests use a fake context that
+// preset-switch and creation-time selection through the Agent's own durable
+// model selection. No Harness is required: the tests use a fake context that
 // records listeners and serves the optional services.
+//
+// The fake mirrors the DSH 0.2.2 plugin contracts the plugin is written
+// against: `agent.model.select()` appends the Session's `model/selection`
+// event, `agentPresets.presetForSession()` reads the committed preset, and
+// `sessionProjections.snapshot(session, keys)` returns the client-visible
+// `{ lastUsed, next }` view of the model selection.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { Config, snapshot } from '../lib/config.js'
 import { buildModelCatalog } from '../lib/catalog.js'
-import { isFirstRootRequest, isRootSession, mount, MODELS_PATH } from '../lib/plugin.js'
-import { normalizeRoutes, routeForPreset, sameSelection, withRoute } from '../lib/routes.js'
+import { isRootSession, mount, MODELS_PATH } from '../lib/plugin.js'
+import { normalizeRoutes, routeForPreset, sameSelection } from '../lib/routes.js'
 
 /**
- * Fake Host context: records listeners, resolves optional services by name,
- * collects the model selections the plugin installs, and collects route
- * registrations inside a fake child context.
+ * Fake Host context: records listeners by event name, resolves optional
+ * services by name, collects the model selections the plugin commits, and
+ * collects route registrations inside a fake child context.
  *
  * @param {{
- *   projections?: object,
+ *   preset?: string | null,
+ *   header?: object,
+ *   requestHeader?: object,
+ *   modelSelection?: { lastUsed?: object | null, pending?: object | null },
  *   llm?: object,
  *   agentDefaultModel?: object,
- *   agents?: object[],
+ *   liveAgents?: boolean,
+ *   withModel?: boolean,
  *   withInjection?: boolean,
- *   withSelection?: boolean,
  *   selectThrows?: boolean,
- * }} [services]
+ * }} [options]
  */
 function createContext({
-  projections,
+  preset = 'architect',
+  header = {},
+  requestHeader,
+  modelSelection,
   llm,
   agentDefaultModel,
-  agents = [],
+  liveAgents = true,
+  withModel = true,
   withInjection = false,
-  withSelection = true,
   selectThrows = false,
 } = {}) {
   const listeners = new Map()
@@ -39,27 +51,72 @@ function createContext({
   const warnings = []
   const infos = []
   const selections = []
-  const controller = withSelection
-    ? {
-        agents: {
-          selectForNextRequest: (agent, selection) => {
-            if (selectThrows) throw new Error('the session writer is held')
-            selections.push({ agent, selection })
+  const settingsPolicies = []
+  const state = {
+    lastUsed: modelSelection?.lastUsed ?? null,
+    pending: modelSelection?.pending ?? null,
+  }
+
+  const agent = {
+    id: 'session-1',
+    session: {
+      id: 'session-1',
+      header,
+      requestHeader: () => requestHeader,
+    },
+    ...(withModel
+      ? {
+          model: {
+            select: (selection) => {
+              if (selectThrows) throw new Error('the session writer is held')
+              selections.push(selection)
+              state.pending = selection
+            },
+            current: () => state.pending ?? state.lastUsed,
           },
-        },
+        }
+      : {}),
+  }
+
+  /** A composer or `/model` choice: committed like the Agent's own selection. */
+  const chooseModel = (selection) => {
+    state.pending = selection
+  }
+
+  const presets = {
+    presetForSession: (session) => (session === agent.session ? preset : null),
+  }
+
+  const projections = {
+    snapshot: (session, keys) => {
+      const values = {}
+      if (session !== agent.session) return { values }
+      if (keys === undefined || keys.includes('agentPreset')) values.agentPreset = preset
+      if (keys === undefined || keys.includes('modelSelection')) {
+        values.modelSelection = { lastUsed: state.lastUsed, next: state.pending ?? state.lastUsed }
       }
-    : {}
+      return { values }
+    },
+  }
+
   const ctx = {
+    fiber: {},
     on: (name, listener) => {
-      listeners.set(name, listener)
-      return () => listeners.delete(name)
+      const registered = listeners.get(name) ?? []
+      registered.push(listener)
+      listeners.set(name, registered)
+      return () => {
+        listeners.set(name, registered.filter((entry) => entry !== listener))
+      }
     },
     get: (name) => {
       if (name === 'sessionProjections') return projections
+      if (name === 'agentPresets') return presets
       if (name === 'llm') return llm
       if (name === 'agentDefaultModel') return agentDefaultModel
-      if (name === 'agents') return { get: (id) => agents.find((agent) => agent.id === id) }
-      if (name === 'sessionController') return controller
+      if (name === 'agents') {
+        return { get: (id) => (liveAgents && id === agent.id ? agent : undefined) }
+      }
       return undefined
     },
     logger: {
@@ -77,6 +134,12 @@ function createContext({
             return () => {}
           },
         },
+        settings: {
+          configure: (policy, owner) => {
+            settingsPolicies.push({ policy, owner })
+            return () => {}
+          },
+        },
         effect: (factory) => {
           factory()
           return () => {}
@@ -87,57 +150,46 @@ function createContext({
       return () => {}
     }
   }
-  return { ctx, listeners, routes, warnings, infos, selections, controller }
-}
 
-/**
- * Fake live Agent whose Session exposes the header and request-header state the
- * listeners read, plus the projection states keyed by projection name.
- *
- * @param {{
- *   id?: string,
- *   preset?: string | null,
- *   header?: object,
- *   requestHeader?: object,
- *   modelSelection?: object,
- * }} [options]
- */
-function createAgent({
-  id = 'session-1',
-  preset = 'architect',
-  header = {},
-  requestHeader,
-  modelSelection,
-} = {}) {
-  const states = new Map([
-    ['agentPreset', preset],
-    ['modelSelection', modelSelection ?? { lastUsed: null, pending: null }],
-  ])
+  /**
+   * Dispatch one recorded event to every listener, awaiting their returns.
+   *
+   * @param {string} name Event name.
+   * @param {...unknown} args Event arguments.
+   * @returns {Promise<void>} settlement of the synchronous listeners.
+   */
+  const emit = async (name, ...args) => {
+    for (const listener of listeners.get(name) ?? []) await listener(...args)
+  }
+
   return {
-    states,
-    agent: {
-      id,
-      session: {
-        id,
-        header,
-        requestHeader: () => requestHeader,
-      },
-    },
+    ctx,
+    agent,
+    listeners,
+    routes,
+    warnings,
+    infos,
+    selections,
+    settingsPolicies,
+    state,
+    chooseModel,
+    emit,
   }
 }
 
-/** Projection service over the Agent's own state map. */
-function projectionsFor(agent) {
-  return { stateOf: (session, key) => (session === agent.agent.session ? agent.states.get(key) : undefined) }
-}
+/** Let pending promise chains run to completion. */
+const flush = () => new Promise((resolve) => setImmediate(resolve))
 
 /** Fake LLM service over a fixed provider/model table. */
-function createLlm({ failing = [] } = {}) {
+function createLlm({ failing = [], deferred = false } = {}) {
   const providers = [
     { id: 'opencode-live', name: 'OpenCode' },
     { id: 'pi-ai', name: 'Pi AI' },
   ]
+  /** Deferred `resolveCallConfig` calls, resolved by the test. */
+  const pending = []
   return {
+    pending,
     listProviders: () => providers,
     listModels: async (provider) => {
       if (failing.includes(provider)) throw new Error(`provider ${provider} is down`)
@@ -163,46 +215,67 @@ function createLlm({ failing = [] } = {}) {
       }
       return {}
     },
-    resolveCallConfig: async (config) => ({ ...config, reasoningEffort: 'high' }),
+    resolveCallConfig: (config) => {
+      if (!deferred) return Promise.resolve({ ...config, reasoningEffort: 'high' })
+      return new Promise((resolve, reject) => {
+        pending.push({ config, resolve, reject })
+      })
+    },
   }
 }
 
 /** A plain Config value as the tests pass it (no volatile references). */
 const CONFIG = { presets: { architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' } } }
-const BASE_CONFIG = { provider: 'deployment', model: 'default', temperature: 0.2, maxTokens: 4096, stop: ['END'] }
+const TWO_ROUTES = {
+  presets: {
+    architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' },
+    implementer: { provider: 'opencode-live', model: 'deepseek-v4.1-flash' },
+  },
+}
 
 test('routes are normalized from the raw config map', () => {
   assert.deepEqual(normalizeRoutes(undefined), {})
   assert.deepEqual(normalizeRoutes(null), {})
-  assert.deepEqual(normalizeRoutes('nonsense'), {})
+  assert.deepEqual(normalizeRoutes({ architect: { provider: 'p', model: 'm' } }), {
+    architect: { provider: 'p', model: 'm' },
+  })
+  assert.deepEqual(normalizeRoutes({ architect: { provider: 'p' } }), {}, 'a half route is dropped')
+  assert.deepEqual(normalizeRoutes({ architect: { model: 'm' } }), {}, 'a half route is dropped')
+  assert.deepEqual(normalizeRoutes({ architect: 'p/m' }), {}, 'a non-object entry is dropped')
   assert.deepEqual(
-    normalizeRoutes({
-      architect: { provider: 'opencode-live', model: 'deepseek-v4-pro', reasoningEffort: 'high' },
-      implementer: { provider: 'opencode-live', model: 'deepseek-v4.1-flash' },
-      broken: { provider: '', model: 'm' },
-      partial: { provider: 'p' },
-      notAnObject: 'nope',
-    }),
-    {
-      architect: { provider: 'opencode-live', model: 'deepseek-v4-pro', reasoningEffort: 'high' },
-      implementer: { provider: 'opencode-live', model: 'deepseek-v4.1-flash' },
-    },
+    normalizeRoutes({ architect: { provider: 'p', model: 'm', reasoningEffort: 'high' } }),
+    { architect: { provider: 'p', model: 'm', reasoningEffort: 'high' } },
+  )
+  assert.deepEqual(
+    normalizeRoutes({ architect: { provider: 'p', model: 'm', reasoningEffort: '' } }),
+    { architect: { provider: 'p', model: 'm' } },
+    'an empty effort is not a route field',
   )
 })
 
 test('a route is found only for an exact configured preset', () => {
-  const routes = normalizeRoutes({ architect: { provider: 'p', model: 'm' } })
-  assert.deepEqual(routeForPreset(routes, 'architect'), { provider: 'p', model: 'm' })
+  const routes = normalizeRoutes(TWO_ROUTES.presets)
+  assert.deepEqual(routeForPreset(routes, 'architect'), {
+    provider: 'opencode-live',
+    model: 'deepseek-v4-pro',
+  })
   assert.equal(routeForPreset(routes, 'reviewer'), undefined)
   assert.equal(routeForPreset(routes, undefined), undefined)
   assert.equal(routeForPreset(routes, ''), undefined)
+  assert.equal(routeForPreset(routes, 'constructor'), undefined, 'inherited keys are not presets')
 })
 
 test('selections are compared by provider, model, and effort', () => {
+  assert.equal(sameSelection(null, null), true)
+  assert.equal(sameSelection(undefined, undefined), true)
+  assert.equal(sameSelection(null, { provider: 'p', model: 'm' }), false)
   assert.equal(sameSelection({ provider: 'p', model: 'm' }, { provider: 'p', model: 'm' }), true)
+  assert.equal(sameSelection({ provider: 'p', model: 'm' }, { provider: 'p', model: 'n' }), false)
+  assert.equal(sameSelection({ provider: 'p', model: 'm' }, { provider: 'q', model: 'm' }), false)
   assert.equal(
     sameSelection({ provider: 'p', model: 'm' }, { provider: 'p', model: 'm', reasoningEffort: 'high' }),
     false,
+    'an absent effort is its own value',
   )
   assert.equal(
     sameSelection(
@@ -211,59 +284,46 @@ test('selections are compared by provider, model, and effort', () => {
     ),
     true,
   )
-  assert.equal(sameSelection({ provider: 'p', model: 'm' }, { provider: 'p', model: 'n' }), false)
-  assert.equal(sameSelection(null, undefined), false)
-  assert.equal(sameSelection(undefined, undefined), true)
-})
-
-test('applying a route preserves sampling fields and drops the inherited effort', () => {
-  assert.deepEqual(withRoute(BASE_CONFIG, { provider: 'x', model: 'y' }), {
-    provider: 'x',
-    model: 'y',
-    temperature: 0.2,
-    maxTokens: 4096,
-    stop: ['END'],
-  })
-  assert.deepEqual(withRoute({ ...BASE_CONFIG, reasoningEffort: 'low' }, { provider: 'x', model: 'y', reasoningEffort: 'high' }), {
-    provider: 'x',
-    model: 'y',
-    temperature: 0.2,
-    maxTokens: 4096,
-    stop: ['END'],
-    reasoningEffort: 'high',
-  })
 })
 
 test('the config schema accepts an empty map and volatile writes', () => {
   const parsed = Config({})
   assert.deepEqual({ ...parsed, presets: parsed.presets.get() }, { presets: {} })
 
-  const configured = Config({
-    presets: { architect: { provider: 'p', model: 'm', reasoningEffort: 'high' } },
-  })
-  assert.deepEqual(configured.presets.get(), {
-    architect: { provider: 'p', model: 'm', reasoningEffort: 'high' },
-  })
+  const written = { architect: { provider: 'p', model: 'm', reasoningEffort: 'high' } }
+  assert.deepEqual(Config({ presets: written }).presets.get(), written)
+  assert.throws(
+    () => Config({ presets: { architect: { provider: 'p' } } }),
+    'a route without a model is rejected',
+  )
 })
 
 test('the live snapshot unwraps volatile references and tolerates plain values', () => {
+  assert.deepEqual(snapshot({ presets: { architect: { provider: 'p', model: 'm' } } }), {
+    presets: { architect: { provider: 'p', model: 'm' } },
+  })
+  assert.deepEqual(snapshot({}), { presets: {} })
   assert.deepEqual(snapshot(undefined), { presets: {} })
-  assert.deepEqual(snapshot({ presets: {} }), { presets: {} })
-  assert.deepEqual(snapshot(CONFIG), CONFIG)
+  assert.deepEqual(snapshot({ presets: null }), { presets: {} })
   assert.deepEqual(
-    snapshot({ presets: { get: () => ({ reviewer: { provider: 'p', model: 'm' } }) } }),
-    { presets: { reviewer: { provider: 'p', model: 'm' } } },
+    snapshot({ presets: { get: () => ({ architect: { provider: 'p', model: 'm' } }) } }),
+    { presets: { architect: { provider: 'p', model: 'm' } } },
+    'a volatile reference is read at use time',
   )
-  assert.deepEqual(snapshot({ presets: { get: () => { throw new Error('gone') } } }), { presets: {} })
+  assert.deepEqual(
+    snapshot({ presets: { get: () => undefined } }),
+    { presets: {} },
+    'an empty volatile reference falls back',
+  )
 })
 
 test('the model catalog groups providers and isolates failures', async () => {
-  const ctx = { get: (name) => (name === 'llm' ? createLlm({ failing: ['pi-ai'] }) : undefined) }
+  const { ctx } = createContext({ llm: createLlm({ failing: ['pi-ai'] }) })
   const catalog = await buildModelCatalog(ctx)
 
-  assert.deepEqual(catalog.routableProviders, ['opencode-live'])
   assert.equal(catalog.groups.length, 1)
   assert.equal(catalog.groups[0].id, 'opencode-live')
+  assert.deepEqual(catalog.routableProviders, ['opencode-live'])
   assert.deepEqual(
     catalog.groups[0].models.map((model) => model.id),
     ['deepseek-v4-pro', 'deepseek-v4.1-flash'],
@@ -276,504 +336,258 @@ test('the model catalog groups providers and isolates failures', async () => {
     defaultEffort: 'high',
   })
   assert.deepEqual(catalog.failures, [{ id: 'pi-ai', name: 'Pi AI', message: 'provider pi-ai is down' }])
-  assert.equal(catalog.default, null)
 })
 
 test('the model catalog reports the deployment default', async () => {
-  const ctx = {
-    get: (name) =>
-      name === 'llm'
-        ? createLlm()
-        : name === 'agentDefaultModel'
-          ? { currentSelection: () => ({ provider: 'opencode-live', model: 'deepseek-v4.1-flash' }) }
-          : undefined,
-  }
+  const selection = { provider: 'opencode-live', model: 'deepseek-v4-pro' }
+  const { ctx } = createContext({
+    llm: createLlm(),
+    agentDefaultModel: { currentSelection: () => selection },
+  })
   const catalog = await buildModelCatalog(ctx)
-  assert.deepEqual(catalog.default, { provider: 'opencode-live', model: 'deepseek-v4.1-flash' })
+  assert.deepEqual(catalog.default, selection)
 })
 
 test('the model catalog degrades without an llm service', async () => {
-  const catalog = await buildModelCatalog({ get: () => undefined })
-  assert.deepEqual(catalog, {
-    default: null,
-    routableProviders: [],
-    groups: [],
-    failures: [],
-  })
-})
-
-test('only the first request of an ordinary root Session is eligible', () => {
-  const first = createAgent()
-  const firstCtx = createContext({ projections: projectionsFor(first) }).ctx
-  assert.equal(isFirstRootRequest(firstCtx, first.agent), true)
-
-  const logged = createAgent({ requestHeader: { config: { provider: 'p', model: 'm' } } })
-  const loggedCtx = createContext({ projections: projectionsFor(logged) }).ctx
-  assert.equal(isFirstRootRequest(loggedCtx, logged.agent), false)
-
-  const pending = createAgent({ modelSelection: { lastUsed: null, pending: { provider: 'p', model: 'm' } } })
-  const pendingCtx = createContext({ projections: projectionsFor(pending) }).ctx
-  assert.equal(isFirstRootRequest(pendingCtx, pending.agent), false)
-
-  const child = createAgent({ header: { parentSession: 'session-parent' } })
-  const childCtx = createContext({ projections: projectionsFor(child) }).ctx
-  assert.equal(isFirstRootRequest(childCtx, child.agent), false)
-
-  const subagent = createAgent({ header: { origin: 'subagent' } })
-  const subagentCtx = createContext({ projections: projectionsFor(subagent) }).ctx
-  assert.equal(isFirstRootRequest(subagentCtx, subagent.agent), false)
-
-  const missing = createContext().ctx
-  assert.equal(isFirstRootRequest(missing, { session: {} }), true)
-})
-
-test('an empty route map registers no catalog route without injection support and reads live config', async () => {
-  const { ctx, routes, listeners } = createContext()
-  mount(ctx, {})
-  assert.equal(routes.length, 0)
-  assert.deepEqual([...listeners.keys()].sort(), ['agent/created', 'agent/request', 'session/event'])
-})
-
-test('the catalog route is registered through the web server', () => {
-  const agent = createAgent()
-  const { ctx, routes } = createContext({
-    projections: projectionsFor(agent),
-    llm: createLlm(),
-    withInjection: true,
-  })
-  mount(ctx, CONFIG)
-  assert.equal(routes.length, 1)
-  assert.equal(routes[0].kind, 'exact')
-  assert.equal(routes[0].path, MODELS_PATH)
-})
-
-test('the first request is routed to the configured preset model', async () => {
-  const agent = createAgent()
-  const { ctx, listeners, infos } = createContext({ projections: projectionsFor(agent), llm: createLlm() })
-  mount(ctx, CONFIG)
-
-  const result = await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG)
-
-  assert.equal(result.provider, 'opencode-live')
-  assert.equal(result.model, 'deepseek-v4-pro')
-  assert.equal(result.reasoningEffort, 'high')
-  assert.equal(result.temperature, 0.2)
-  assert.equal(result.maxTokens, 4096)
-  assert.equal(infos.length, 1)
-  assert.match(infos[0], /preset "architect" starts on opencode-live\/deepseek-v4-pro/)
-})
-
-test('a live config write applies without a restart', async () => {
-  const agent = createAgent()
-  const { ctx, listeners } = createContext({ projections: projectionsFor(agent) })
-  let live = {}
-  mount(ctx, { presets: { get: () => live } })
-
-  assert.deepEqual(
-    await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG),
-    BASE_CONFIG,
-  )
-
-  live = { architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' } }
-  const routed = await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG)
-  assert.equal(routed.provider, 'opencode-live')
-  assert.equal(routed.model, 'deepseek-v4-pro')
-})
-
-test('a later request, an explicit selection, and a subagent keep the resolved route', async () => {
-  for (const agent of [
-    createAgent({ requestHeader: { config: { provider: 'deployment', model: 'default' } } }),
-    createAgent({ modelSelection: { lastUsed: null, pending: { provider: 'chosen', model: 'model' } } }),
-    createAgent({ header: { parentSession: 'session-parent' } }),
-  ]) {
-    const { ctx, listeners, infos } = createContext({ projections: projectionsFor(agent) })
-    mount(ctx, CONFIG)
-
-    const result = await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG)
-    assert.deepEqual(result, BASE_CONFIG)
-    assert.equal(infos.length, 0)
-  }
-})
-
-test('an unknown preset or an unavailable route falls back to the resolved config', async () => {
-  const unknown = createAgent({ preset: 'other' })
-  const unknownHarness = createContext({ projections: projectionsFor(unknown) })
-  mount(unknownHarness.ctx, CONFIG)
-  assert.deepEqual(
-    await unknownHarness.listeners.get('agent/request')({ agent: unknown.agent }, async () => BASE_CONFIG),
-    BASE_CONFIG,
-  )
-
-  const unavailable = createAgent()
-  const failingLlm = {
-    ...createLlm(),
-    resolveCallConfig: async () => {
-      throw new Error('no adapter for provider')
-    },
-  }
-  const unavailableHarness = createContext({ projections: projectionsFor(unavailable), llm: failingLlm })
-  mount(unavailableHarness.ctx, CONFIG)
-  assert.deepEqual(
-    await unavailableHarness.listeners.get('agent/request')({ agent: unavailable.agent }, async () => BASE_CONFIG),
-    BASE_CONFIG,
-  )
-  assert.equal(unavailableHarness.warnings.length, 1)
-  assert.match(unavailableHarness.warnings[0], /route opencode-live\/deepseek-v4-pro is unavailable/)
-})
-
-test('without a model service the configured route is applied unvalidated', async () => {
-  const agent = createAgent()
-  const { ctx, listeners } = createContext({ projections: projectionsFor(agent) })
-  mount(ctx, { presets: { architect: { provider: 'p', model: 'm', reasoningEffort: 'low' } } })
-
-  const result = await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG)
-  assert.equal(result.provider, 'p')
-  assert.equal(result.model, 'm')
-  assert.equal(result.reasoningEffort, 'low')
+  const { ctx } = createContext({ agentDefaultModel: { currentSelection: () => ({ provider: 'p', model: 'm' }) } })
+  const catalog = await buildModelCatalog(ctx)
+  assert.deepEqual(catalog.groups, [])
+  assert.deepEqual(catalog.routableProviders, [])
+  assert.deepEqual(catalog.default, { provider: 'p', model: 'm' })
 })
 
 test('only ordinary root sessions are eligible for preset routes', () => {
-  assert.equal(isRootSession({ header: {} }), true)
   assert.equal(isRootSession(undefined), false)
   assert.equal(isRootSession(null), false)
+  assert.equal(isRootSession({ header: {} }), true)
+  assert.equal(isRootSession({ header: { agentPreset: 'architect' } }), true)
   assert.equal(isRootSession({ header: { origin: 'subagent' } }), false)
-  assert.equal(isRootSession({ header: { parentSession: 'session-parent' } }), false)
+  assert.equal(isRootSession({ header: { parentSession: 'session-0' } }), false)
 })
 
-const SELECTED_ARCHITECT = {
-  provider: 'opencode-live',
-  model: 'deepseek-v4-pro',
-  reasoningEffort: 'high',
-}
+test('the catalog route is registered through the web server', () => {
+  const harness = createContext({ withInjection: true })
+  mount(harness.ctx, CONFIG)
+
+  assert.equal(harness.routes.length, 1)
+  assert.equal(harness.routes[0].kind, 'exact')
+  assert.equal(harness.routes[0].path, MODELS_PATH)
+  assert.equal(typeof harness.routes[0].handler, 'function')
+  assert.deepEqual(harness.settingsPolicies, [{ policy: { auto: false }, owner: harness.ctx.fiber }])
+})
+
+test('the plugin routes without a request listener', () => {
+  const harness = createContext()
+  mount(harness.ctx, CONFIG)
+
+  // DSH 0.2.2 fixes the step model before prompt assembly and fails a request
+  // whose listener proposes a different route, so the plugin must not listen.
+  assert.deepEqual([...harness.listeners.keys()].sort(), ['agent-preset/selected', 'agent/created'])
+})
 
 test('a preset switch applies the configured route as the next model selection', async () => {
-  const agent = createAgent()
-  const { ctx, listeners, infos, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: createLlm(),
-    agents: [agent.agent],
-  })
-  mount(ctx, CONFIG)
+  const harness = createContext({ preset: 'architect', llm: createLlm() })
+  mount(harness.ctx, CONFIG)
 
-  const applied = await listeners.get('session/event')(agent.agent.session, {
-    type: 'agent-preset/selected',
-    data: { agentPreset: 'architect' },
-  })
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  await flush()
 
-  assert.equal(applied, true)
-  assert.equal(selections.length, 1)
-  assert.equal(selections[0].agent, agent.agent)
-  assert.deepEqual(selections[0].selection, SELECTED_ARCHITECT)
-  assert.match(
-    infos[0],
-    /preset "architect" switches session "session-1" to opencode-live\/deepseek-v4-pro/,
-  )
+  assert.deepEqual(harness.selections, [
+    { provider: 'opencode-live', model: 'deepseek-v4-pro', reasoningEffort: 'high' },
+  ])
+  assert.match(harness.infos.at(-1), /preset "architect" switches session "session-1" to opencode-live\/deepseek-v4-pro/)
 })
 
 test('a preset switch reads the live route map', async () => {
-  const agent = createAgent()
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    agents: [agent.agent],
-  })
-  let live = {}
-  mount(ctx, { presets: { get: () => live } })
-  const event = { type: 'agent-preset/selected', data: { agentPreset: 'architect' } }
+  let routes = { architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' } }
+  const harness = createContext({ preset: 'architect', llm: createLlm() })
+  // The volatile field is a reference the settings service replaces in place,
+  // exactly like the Configure page saving the map.
+  mount(harness.ctx, { presets: { get: () => routes } })
 
-  assert.equal(await listeners.get('session/event')(agent.agent.session, event), false)
-  assert.equal(selections.length, 0)
+  routes = { architect: { provider: 'opencode-live', model: 'deepseek-v4.1-flash' } }
 
-  live = { architect: { provider: 'p', model: 'm' } }
-  assert.equal(await listeners.get('session/event')(agent.agent.session, event), true)
-  assert.deepEqual(selections[0].selection, { provider: 'p', model: 'm' })
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  await flush()
+
+  assert.deepEqual(harness.selections, [
+    { provider: 'opencode-live', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' },
+  ])
 })
 
 test('a superseded preset switch cannot overwrite the newer selection', async () => {
-  const agent = createAgent()
-  const gates = []
-  const deferredLlm = {
-    ...createLlm(),
-    resolveCallConfig: (config) =>
-      new Promise((resolve) => {
-        gates.push(() => resolve({ ...config, reasoningEffort: 'high' }))
-      }),
-  }
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: deferredLlm,
-    agents: [agent.agent],
-  })
-  mount(ctx, {
-    presets: {
-      architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' },
-      implementer: { provider: 'opencode-live', model: 'deepseek-v4.1-flash' },
-    },
-  })
+  const llm = createLlm({ deferred: true })
+  const harness = createContext({ preset: 'architect', llm })
+  mount(harness.ctx, TWO_ROUTES)
 
-  const older = listeners.get('session/event')(agent.agent.session, {
-    type: 'agent-preset/selected',
-    data: { agentPreset: 'architect' },
-  })
-  agent.states.set('agentPreset', 'implementer')
-  const newer = listeners.get('session/event')(agent.agent.session, {
-    type: 'agent-preset/selected',
-    data: { agentPreset: 'implementer' },
-  })
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  await harness.emit('agent-preset/selected', 'session-1', 'implementer')
+  assert.equal(llm.pending.length, 2)
 
-  gates[1]()
-  assert.equal(await newer, true)
-  gates[0]()
-  assert.equal(await older, false)
+  // The older switch resolves last and must be dropped by its token.
+  llm.pending[1].resolve({ ...llm.pending[1].config })
+  llm.pending[0].resolve({ ...llm.pending[0].config })
+  await flush()
 
-  assert.equal(selections.length, 1)
-  assert.equal(selections[0].selection.model, 'deepseek-v4.1-flash')
+  assert.deepEqual(harness.selections, [
+    { provider: 'opencode-live', model: 'deepseek-v4.1-flash' },
+  ])
 })
 
 test('a composer choice made while a switch resolves is not overwritten', async () => {
-  const agent = createAgent()
-  const gates = []
-  const deferredLlm = {
-    ...createLlm(),
-    resolveCallConfig: (config) =>
-      new Promise((resolve) => {
-        gates.push(() => resolve({ ...config, reasoningEffort: 'high' }))
-      }),
-  }
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: deferredLlm,
-    agents: [agent.agent],
-  })
-  mount(ctx, CONFIG)
+  const llm = createLlm({ deferred: true })
+  const harness = createContext({ preset: 'architect', llm })
+  mount(harness.ctx, CONFIG)
 
-  const pending = listeners.get('session/event')(agent.agent.session, {
-    type: 'agent-preset/selected',
-    data: { agentPreset: 'architect' },
-  })
-  agent.states.set('modelSelection', {
-    lastUsed: null,
-    pending: { provider: 'chosen', model: 'model' },
-  })
-  gates[0]()
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  harness.chooseModel({ provider: 'deployment', model: 'user-choice' })
+  llm.pending[0].resolve({ ...llm.pending[0].config })
+  await flush()
 
-  assert.equal(await pending, false)
-  assert.equal(selections.length, 0)
+  assert.deepEqual(harness.selections, [], 'the user choice wins')
 })
 
 test('a switch landing on another preset is dropped after resolution', async () => {
-  const agent = createAgent()
-  const gates = []
-  const deferredLlm = {
-    ...createLlm(),
-    resolveCallConfig: (config) =>
-      new Promise((resolve) => {
-        gates.push(() => resolve({ ...config, reasoningEffort: 'high' }))
-      }),
-  }
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: deferredLlm,
-    agents: [agent.agent],
-  })
-  mount(ctx, { presets: { architect: { provider: 'opencode-live', model: 'deepseek-v4-pro' } } })
+  const llm = createLlm({ deferred: true })
+  const harness = createContext({ preset: 'architect', llm })
+  mount(harness.ctx, CONFIG)
 
-  const stale = listeners.get('session/event')(agent.agent.session, {
-    type: 'agent-preset/selected',
-    data: { agentPreset: 'architect' },
-  })
-  agent.states.set('agentPreset', 'reviewer')
-  gates[0]()
+  // The second switch names a preset without a route: it supersedes the first
+  // one without committing anything of its own.
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  await harness.emit('agent-preset/selected', 'session-1', 'reviewer')
+  assert.equal(llm.pending.length, 1)
 
-  assert.equal(await stale, false)
-  assert.equal(selections.length, 0)
+  llm.pending[0].resolve({ ...llm.pending[0].config })
+  await flush()
+
+  assert.deepEqual(harness.selections, [])
 })
 
 test('a preset without a route, a started session, and a subagent switch leave the model alone', async () => {
-  const unconfigured = createAgent({ preset: 'reviewer' })
-  const unconfiguredHarness = createContext({
-    projections: projectionsFor(unconfigured),
-    llm: createLlm(),
-    agents: [unconfigured.agent],
-  })
-  mount(unconfiguredHarness.ctx, CONFIG)
-  assert.equal(
-    await unconfiguredHarness.listeners.get('session/event')(unconfigured.agent.session, {
-      type: 'agent-preset/selected',
-      data: { agentPreset: 'reviewer' },
-    }),
-    false,
-  )
-  assert.equal(unconfiguredHarness.selections.length, 0)
+  const unconfigured = createContext({ preset: 'reviewer', llm: createLlm() })
+  mount(unconfigured.ctx, CONFIG)
+  await unconfigured.emit('agent-preset/selected', 'session-1', 'reviewer')
+  await flush()
+  assert.deepEqual(unconfigured.selections, [])
 
-  for (const agent of [
-    createAgent({ requestHeader: { config: { provider: 'deployment', model: 'default' } } }),
-    createAgent({ header: { parentSession: 'session-parent' } }),
-    createAgent({ header: { origin: 'subagent' } }),
-  ]) {
-    const harness = createContext({
-      projections: projectionsFor(agent),
-      llm: createLlm(),
-      agents: [agent.agent],
-    })
-    mount(harness.ctx, CONFIG)
-    assert.equal(
-      await harness.listeners.get('session/event')(agent.agent.session, {
-        type: 'agent-preset/selected',
-        data: { agentPreset: 'architect' },
-      }),
-      false,
-    )
-    assert.equal(harness.selections.length, 0)
-  }
+  const started = createContext({
+    preset: 'architect',
+    llm: createLlm(),
+    requestHeader: { config: { provider: 'deployment', model: 'default' } },
+  })
+  mount(started.ctx, CONFIG)
+  await started.emit('agent-preset/selected', 'session-1', 'architect')
+  await flush()
+  assert.deepEqual(started.selections, [], 'a started session keeps its logged route')
+
+  const subagent = createContext({ preset: 'architect', llm: createLlm(), header: { origin: 'subagent' } })
+  mount(subagent.ctx, CONFIG)
+  await subagent.emit('agent-preset/selected', 'session-1', 'architect')
+  await flush()
+  assert.deepEqual(subagent.selections, [], 'a subagent session is never routed')
 })
 
-test('a preset switch without a live agent or a manual model selection is ignored', async () => {
-  const idle = createAgent()
-  const idleHarness = createContext({ projections: projectionsFor(idle), llm: createLlm(), agents: [] })
-  mount(idleHarness.ctx, CONFIG)
-  assert.equal(
-    await idleHarness.listeners.get('session/event')(idle.agent.session, {
-      type: 'agent-preset/selected',
-      data: { agentPreset: 'architect' },
-    }),
-    undefined,
-  )
-  assert.equal(idleHarness.selections.length, 0)
+test('a preset switch without a live agent is ignored', async () => {
+  const harness = createContext({ llm: createLlm() })
+  mount(harness.ctx, CONFIG)
 
-  const switched = createAgent()
-  const switchedHarness = createContext({
-    projections: projectionsFor(switched),
-    llm: createLlm(),
-    agents: [switched.agent],
-  })
-  mount(switchedHarness.ctx, CONFIG)
-  assert.equal(
-    await switchedHarness.listeners.get('session/event')(switched.agent.session, {
-      type: 'model/selection',
-      data: { provider: 'chosen', model: 'model' },
-    }),
-    undefined,
-  )
-  assert.equal(switchedHarness.selections.length, 0)
+  await harness.emit('agent-preset/selected', 'session-unknown', 'architect')
+  await flush()
+
+  assert.deepEqual(harness.selections, [])
+})
+
+test('a preset switch without the Agent model selection API is inert', async () => {
+  const harness = createContext({ llm: createLlm(), withModel: false })
+  mount(harness.ctx, CONFIG)
+
+  await harness.emit('agent-preset/selected', 'session-1', 'architect')
+  await flush()
+
+  assert.deepEqual(harness.selections, [])
 })
 
 test('a session created on a configured preset selects the route before its first prompt', async () => {
-  const agent = createAgent()
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: createLlm(),
-    agents: [agent.agent],
-  })
-  mount(ctx, CONFIG)
+  const harness = createContext({ preset: 'architect', llm: createLlm() })
+  mount(harness.ctx, CONFIG)
 
-  await listeners.get('agent/created')({ agent: agent.agent, source: 'startup' })
+  await harness.emit('agent/created', { agent: harness.agent, source: 'startup' })
+  await flush()
 
-  assert.equal(selections.length, 1)
-  assert.deepEqual(selections[0].selection, SELECTED_ARCHITECT)
+  assert.deepEqual(harness.selections, [
+    { provider: 'opencode-live', model: 'deepseek-v4-pro', reasoningEffort: 'high' },
+  ])
 })
 
 test('a resumed, cleared, or compacted agent keeps the route recorded in its log', async () => {
-  for (const source of ['resume', 'clear', 'compaction']) {
-    const agent = createAgent()
-    const { ctx, listeners, selections } = createContext({
-      projections: projectionsFor(agent),
-      llm: createLlm(),
-      agents: [agent.agent],
-    })
-    mount(ctx, CONFIG)
-
-    await listeners.get('agent/created')({ agent: agent.agent, source })
-    assert.equal(selections.length, 0, `${source} creation must not reselect the preset route`)
+  for (const source of ['resume', 'clear', 'compact']) {
+    const harness = createContext({ preset: 'architect', llm: createLlm() })
+    mount(harness.ctx, CONFIG)
+    await harness.emit('agent/created', { agent: harness.agent, source })
+    await flush()
+    assert.deepEqual(harness.selections, [], `source "${source}" keeps the recorded route`)
   }
 })
 
 test('creation keeps a pending selection, an unconfigured preset, and a subagent untouched', async () => {
-  const pending = createAgent({
-    modelSelection: { lastUsed: null, pending: { provider: 'chosen', model: 'model' } },
-  })
-  const pendingHarness = createContext({
-    projections: projectionsFor(pending),
+  const pending = createContext({
+    preset: 'architect',
     llm: createLlm(),
-    agents: [pending.agent],
+    modelSelection: { pending: { provider: 'deployment', model: 'user-choice' } },
   })
-  mount(pendingHarness.ctx, CONFIG)
-  await pendingHarness.listeners.get('agent/created')({ agent: pending.agent, source: 'startup' })
-  assert.equal(pendingHarness.selections.length, 0)
+  mount(pending.ctx, CONFIG)
+  await pending.emit('agent/created', { agent: pending.agent, source: 'startup' })
+  await flush()
+  assert.deepEqual(pending.selections, [], 'a composer choice made before creation wins')
 
-  const unconfigured = createAgent({ preset: 'reviewer' })
-  const unconfiguredHarness = createContext({
-    projections: projectionsFor(unconfigured),
-    llm: createLlm(),
-    agents: [unconfigured.agent],
-  })
-  mount(unconfiguredHarness.ctx, CONFIG)
-  await unconfiguredHarness.listeners.get('agent/created')({
-    agent: unconfigured.agent,
-    source: 'startup',
-  })
-  assert.equal(unconfiguredHarness.selections.length, 0)
+  const unconfigured = createContext({ preset: 'reviewer', llm: createLlm() })
+  mount(unconfigured.ctx, CONFIG)
+  await unconfigured.emit('agent/created', { agent: unconfigured.agent, source: 'startup' })
+  await flush()
+  assert.deepEqual(unconfigured.selections, [])
 
-  const child = createAgent({ header: { origin: 'subagent' } })
-  const childHarness = createContext({
-    projections: projectionsFor(child),
-    llm: createLlm(),
-    agents: [child.agent],
-  })
-  mount(childHarness.ctx, CONFIG)
-  await childHarness.listeners.get('agent/created')({ agent: child.agent, source: 'startup' })
-  assert.equal(childHarness.selections.length, 0)
+  const subagent = createContext({ preset: 'architect', llm: createLlm(), header: { origin: 'subagent' } })
+  mount(subagent.ctx, CONFIG)
+  await subagent.emit('agent/created', { agent: subagent.agent, source: 'startup' })
+  await flush()
+  assert.deepEqual(subagent.selections, [])
 })
 
-test('an unavailable route and a held session writer are reported and not applied', async () => {
-  const failingLlm = {
-    ...createLlm(),
-    resolveCallConfig: async () => {
-      throw new Error('no adapter for provider')
-    },
+test('an unavailable route is reported and not applied', async () => {
+  const llm = createLlm()
+  llm.resolveCallConfig = async () => {
+    throw new Error('model not served')
   }
-  const unavailable = createAgent()
-  const unavailableHarness = createContext({
-    projections: projectionsFor(unavailable),
-    llm: failingLlm,
-    agents: [unavailable.agent],
-  })
-  mount(unavailableHarness.ctx, CONFIG)
-  await unavailableHarness.listeners.get('agent/created')({
-    agent: unavailable.agent,
-    source: 'startup',
-  })
-  assert.equal(unavailableHarness.selections.length, 0)
-  assert.match(unavailableHarness.warnings[0], /route opencode-live\/deepseek-v4-pro is unavailable/)
+  const harness = createContext({ preset: 'architect', llm })
+  mount(harness.ctx, CONFIG)
 
-  const held = createAgent()
-  const heldHarness = createContext({
-    projections: projectionsFor(held),
-    llm: createLlm(),
-    agents: [held.agent],
-    selectThrows: true,
-  })
-  mount(heldHarness.ctx, CONFIG)
-  await heldHarness.listeners.get('agent/created')({ agent: held.agent, source: 'startup' })
-  assert.equal(heldHarness.selections.length, 0)
-  assert.match(heldHarness.warnings[0], /could not be applied to session "session-1"/)
+  await harness.emit('agent/created', { agent: harness.agent, source: 'startup' })
+  await flush()
+
+  assert.deepEqual(harness.selections, [])
+  assert.match(harness.warnings.at(-1), /preset "architect" route opencode-live\/deepseek-v4-pro is unavailable/)
 })
 
-test('without the session selection API the creation hook is inert and the first request is routed', async () => {
-  const agent = createAgent()
-  const { ctx, listeners, selections } = createContext({
-    projections: projectionsFor(agent),
-    llm: createLlm(),
-    agents: [agent.agent],
-    withSelection: false,
-  })
-  mount(ctx, CONFIG)
+test('a failing model selection is reported and swallowed', async () => {
+  const harness = createContext({ preset: 'architect', llm: createLlm(), selectThrows: true })
+  mount(harness.ctx, CONFIG)
 
-  await listeners.get('agent/created')({ agent: agent.agent, source: 'startup' })
-  assert.equal(selections.length, 0)
+  await harness.emit('agent/created', { agent: harness.agent, source: 'startup' })
+  await flush()
 
-  const result = await listeners.get('agent/request')({ agent: agent.agent }, async () => BASE_CONFIG)
-  assert.equal(result.provider, 'opencode-live')
-  assert.equal(result.model, 'deepseek-v4-pro')
+  assert.deepEqual(harness.selections, [])
+  assert.match(harness.warnings.at(-1), /preset "architect" could not be applied to session "session-1"/)
+})
+
+test('without a model service the configured route is committed unvalidated', async () => {
+  const harness = createContext({ preset: 'architect' })
+  mount(harness.ctx, CONFIG)
+
+  await harness.emit('agent/created', { agent: harness.agent, source: 'startup' })
+  await flush()
+
+  assert.deepEqual(harness.selections, [{ provider: 'opencode-live', model: 'deepseek-v4-pro' }])
 })
 
 test('the Host plugin entry point exports the plugin contract and its schema', async () => {
